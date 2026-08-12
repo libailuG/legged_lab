@@ -90,55 +90,44 @@ def _transform_policy_obs_left_right(env: ManagerBasedRLEnv, obs: torch.Tensor) 
     obs = obs.clone()
     device = obs.device
     joint_num = 29 # G1 29dof
-    key_body_num = 6
-
-    # policy_obs_term_dim = env.observation_manager.group_obs_term_dim["policy"]
-    # [(15,), (15,), (15,), (145,), (145,), (145,)]
-    HISTORY_LEN = 5
+    # Policy observations are concatenated without history:
+    # angular velocity, projected gravity, commands, joint position,
+    # joint velocity, and previous action.
     ANG_VEL_DIM = 3
-    ROT_TAN_NORM = 6
+    PROJECTED_GRAVITY_DIM = 3
     VEL_CMD_DIM = 3
     JOINT_POS_DIM = joint_num
     JOINT_VEL_DIM = joint_num
     LAST_ACTIONS_DIM = joint_num
-    KEY_BODY_POS_DIM = key_body_num * 3
-    
+
     end_idx = 0
     # ang vel
-    for h in range(HISTORY_LEN):
-        start_idx = end_idx
-        end_idx = start_idx + ANG_VEL_DIM
-        obs[:, start_idx:end_idx] = obs[:, start_idx:end_idx] * torch.tensor([-1, 1, -1], device=device)
-    # root rot tan norm
-    for h in range(HISTORY_LEN):
-        start_idx = end_idx
-        end_idx = start_idx + ROT_TAN_NORM
-        obs[:, start_idx:end_idx] = obs[:, start_idx:end_idx] * torch.tensor([1, -1, 1, 1, -1, 1], device=device)
+    start_idx = end_idx
+    end_idx = start_idx + ANG_VEL_DIM
+    obs[:, start_idx:end_idx] *= torch.tensor([-1, 1, -1], device=device)
+    # projected gravity
+    start_idx = end_idx
+    end_idx = start_idx + PROJECTED_GRAVITY_DIM
+    obs[:, start_idx:end_idx] *= torch.tensor([1, -1, 1], device=device)
     # velocity command
-    for h in range(HISTORY_LEN):
-        start_idx = end_idx
-        end_idx = start_idx + VEL_CMD_DIM
-        obs[:, start_idx:end_idx] = obs[:, start_idx:end_idx] * torch.tensor([1, -1, -1], device=device)
+    start_idx = end_idx
+    end_idx = start_idx + VEL_CMD_DIM
+    obs[:, start_idx:end_idx] *= torch.tensor([1, -1, -1], device=device)
     # joint pos
-    for h in range(HISTORY_LEN):
-        start_idx = end_idx
-        end_idx = start_idx + JOINT_POS_DIM
-        obs[:, start_idx:end_idx] = _switch_g1_29dof_joints_left_right(obs[:, start_idx:end_idx])
+    start_idx = end_idx
+    end_idx = start_idx + JOINT_POS_DIM
+    obs[:, start_idx:end_idx] = _switch_g1_29dof_joints_left_right(obs[:, start_idx:end_idx])
     # joint vel
-    for h in range(HISTORY_LEN):
-        start_idx = end_idx
-        end_idx = start_idx + JOINT_VEL_DIM
-        obs[:, start_idx:end_idx] = _switch_g1_29dof_joints_left_right(obs[:, start_idx:end_idx])
+    start_idx = end_idx
+    end_idx = start_idx + JOINT_VEL_DIM
+    obs[:, start_idx:end_idx] = _switch_g1_29dof_joints_left_right(obs[:, start_idx:end_idx])
     # last actions
-    for h in range(HISTORY_LEN):
-        start_idx = end_idx
-        end_idx = start_idx + LAST_ACTIONS_DIM
-        obs[:, start_idx:end_idx] = _switch_g1_29dof_joints_left_right(obs[:, start_idx:end_idx])
-    # key body pos
-    for h in range(HISTORY_LEN):
-        start_idx = end_idx
-        end_idx = start_idx + KEY_BODY_POS_DIM
-        obs[:, start_idx:end_idx] = _switch_g1_29dof_key_body_pos_left_right(obs[:, start_idx:end_idx])
+    start_idx = end_idx
+    end_idx = start_idx + LAST_ACTIONS_DIM
+    obs[:, start_idx:end_idx] = _switch_g1_29dof_joints_left_right(obs[:, start_idx:end_idx])
+
+    if end_idx != obs.shape[-1]:
+        raise ValueError(f"Unexpected G1 policy observation size: {obs.shape[-1]} (expected {end_idx}).")
     
     return obs
 

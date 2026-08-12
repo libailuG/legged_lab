@@ -307,11 +307,11 @@ class EventCfg:
         },
     )
 
-    # reset_from_ref = EventTerm(
-    #     func=mdp.reset_from_ref, 
-    #     mode="reset",
-    #     params=MISSING
-    # )
+    reset_from_ref = EventTerm(
+        func=mdp.reset_from_ref,
+        mode="reset",
+        params=MISSING,
+    )
 
     # # interval
 
