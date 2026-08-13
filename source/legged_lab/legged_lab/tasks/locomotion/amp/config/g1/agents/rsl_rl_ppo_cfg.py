@@ -75,4 +75,8 @@ class G1RslRlOnPolicyRunnerAmpCfg(RslRlOnPolicyRunnerCfg):
     )
 
 
+@configclass
+class G1V1RslRlOnPolicyRunnerAmpCfg(G1RslRlOnPolicyRunnerAmpCfg):
+    """AMP runner configuration for the regenerated G1 model."""
 
+    experiment_name = "g1_amp_v1"

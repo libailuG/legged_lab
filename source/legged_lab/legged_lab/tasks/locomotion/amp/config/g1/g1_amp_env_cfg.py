@@ -39,6 +39,7 @@ KEY_BODY_NAMES = [
 ] # if changed here and symmetry is enabled, remember to update amp.mdp.symmetry.g1 as well!
 ANIMATION_TERM_NAME = "animation"
 AMP_NUM_STEPS = 4
+G1_29DOF_V1_USD_PATH = "/home/libai/08_amp/unitree_ros/robots/g1_description/usd/g1_29dof.usd"
 
 @configclass
 class G1AmpRewards():
@@ -230,3 +231,25 @@ class G1AmpEnvCfg_PLAY(G1AmpEnvCfg):
         self.commands.base_velocity.ranges.heading = (0.0, 0.0)
         
         self.events.reset_from_ref = None
+
+
+@configclass
+class G1AmpEnvCfgV1(G1AmpEnvCfg):
+    """G1 AMP environment using the regenerated Unitree G1 USD model."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Keep the v0 task unchanged and only replace the robot model for v1.
+        self.scene.robot.spawn.usd_path = G1_29DOF_V1_USD_PATH
+
+
+@configclass
+class G1AmpEnvCfg_PLAY_V1(G1AmpEnvCfg_PLAY):
+    """G1 AMP play environment using the regenerated Unitree G1 USD model."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Preserve all Play-v0 settings while using the regenerated model.
+        self.scene.robot.spawn.usd_path = G1_29DOF_V1_USD_PATH
