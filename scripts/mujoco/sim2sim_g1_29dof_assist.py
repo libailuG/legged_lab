@@ -119,7 +119,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY, help="Exported TorchScript policy path.")
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL, help="MuJoCo XML model path.")
-    parser.add_argument("--vx", type=float, default=0.5, help="Initial forward command in m/s.")
+    parser.add_argument("--vx", type=float, default=0.7, help="Initial forward command in m/s.")
     parser.add_argument("--vy", type=float, default=0.0, help="Initial lateral command in m/s.")
     parser.add_argument("--yaw", type=float, default=0.0, help="Initial yaw-rate command in rad/s.")
     parser.add_argument("--duration", type=float, default=None, help="Run duration in seconds; unlimited with viewer.")

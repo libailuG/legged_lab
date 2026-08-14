@@ -553,6 +553,129 @@ assist actuator torque: 0.000e+00 N.m（连续 20 步）
 checkpoint 成功加载，测试进程正常退出。USD 加载时仍会报告 imu、D435 和 Mid360 的 visual
 reference warning，但不影响 articulation、策略维度和本次零扭矩验证。
 
+### 2.15 建立外骨骼辅助扭矩 PPO 训练任务
+
+新建了两个相互对应的独立任务：
+
+```text
+LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v0
+LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v0
+```
+
+所有任务代码位于新目录：
+
+```text
+source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_assist_exoskeleton/
+```
+
+控制采用分层结构：冻结的 `model_29400.pt` 导出策略继续根据原 96 维输入生成 29
+个机器人本体关节位置动作；新 PPO 只生成左右两个 `hip_pitch_assist_joint` 的扭矩。
+冻结策略文件为：
+
+```text
+logs/rsl_rl/g1_assist_amp/2026-08-13_13-45-16/exported/policy.pt
+```
+
+辅助 PPO 的物理扭矩范围按照 URDF effort limit 设为 `[-8, 8] N·m`。Actor 和 Critic
+均使用三层 MLP：
+
+```text
+150 -> 256 -> 64 -> 16 -> 2    Actor
+150 -> 256 -> 64 -> 16 -> 1    Critic
+```
+
+控制周期为 `0.001 × 20 = 0.02 s`，即 50 Hz。0.5 秒对应 25 帧，每帧包含左右
+辅助关节的 angle、velocity 和 commanded torque 共 6 个值，因此输入维度为
+`25 × 6 = 150`。
+
+外骨骼辅助策略曾短暂使用固定的 `(vx, vy, yaw)=(0.7, 0.0, 0.0)` 指令，后续已按要求
+取消。训练任务重新继承原 G1-assist 的随机 command 范围；Play 任务恢复为
+`vx=(0.5, 3.0)`、`vy=(-0.5, 0.5)`、`yaw=(-1.0, 1.0)`。
+
+大规模训练首次使用 6000 个环境时，ActionTerm reset 中原先的
+`default_joint_pos[env_ids, joint_ids]` 会触发 PyTorch 成对高级索引，导致 6000 个环境索引
+与 29 个关节索引无法广播。现已改为先选择环境、再选择关节的二维索引，支持任意环境数量。
+
+奖励只有三项：辅助动作变化惩罚、辅助扭矩同向/幅值奖励、非超时终止惩罚。同向奖励
+鼓励辅助扭矩接近对应 hip-pitch 电机扭矩；反向扭矩没有有效辅助奖励，超过对应 hip-pitch
+扭矩的部分会受到二次惩罚。
+
+终止条件包含原 G1 assist 的高度过低、姿态超过 60 度和 20 秒超时，并增加左右任一
+assist joint 与对应 hip-pitch joint 相差超过 4 度时终止。重置时会首先同步两组关节角度，
+避免随机初始化直接触发 4 度终止条件。
+
+已在 `env_isaaclab_2` 中完成 1 环境、1 iteration 真实训练测试，并使用生成的
+`model_0.pt` 完成 Play 任务加载测试。验证得到：
+
+```text
+physics dt: 0.001 s
+control dt: 0.02 s
+action shape: 2
+policy observation shape: 150
+critic observation shape: 150
+runner: OnPolicyRunner + PPO
+```
+
+### 2.16 单机器人 Play、CSV 记录与关节曲线
+
+参考 `/home/libai/06_assist_test/isaaclab/assist/scripts/rsl_rl/play_assist.py`，新建了当前
+外骨骼任务专用的单机器人播放脚本：
+
+```text
+scripts/rsl_rl/play_g1_assist_exoskeleton_plot.py
+```
+
+脚本强制使用 1 个环境，加载
+`LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v0` 和指定的辅助 PPO checkpoint。
+它直接从 articulation 读取左右两组关节的角度、角速度和实际 actuator torque，不依赖
+其他项目私有的 `_critic_obs_history`。
+
+实时图按左右腿分为两列，包含四行：hip/assist 角度、assist 与 hip 角度差、hip/assist
+角速度、hip/assist 扭矩。角度差图显示正负 4 度终止边界。退出时会保存完整 CSV 和最终
+PNG 到 checkpoint 目录下的 `play_analysis/`。
+
+已用 `model_1000.pt` 完成 0.4 秒无窗口测试，CSV 和 PNG 均成功生成。
+
+### 2.17 外骨骼辅助策略 MuJoCo Sim2Sim
+
+为单机器人外骨骼 Play 新建了双策略 MuJoCo Sim2Sim 脚本：
+
+```text
+scripts/mujoco/sim2sim_g1_assist_exoskeleton.py
+```
+
+脚本加载 `g1_29dof_assist_exoskeleton.xml`，以冻结的原 29 关节策略生成本体 PD 目标，
+同时使用 `model_1000.pt` 对应的导出策略生成左右 assist joint 的直接扭矩。辅助观测严格
+保持 25 帧、150 维的 oldest-to-newest 排列，扭矩输出范围为正负 8 N·m。MuJoCo 使用
+`dt=0.001 s`、`decimation=20`，与 Isaac 训练任务同为 50 Hz 策略频率。
+
+脚本支持 MuJoCo viewer、实时曲线、键盘速度指令、CSV 和最终 PNG。5 秒无窗口测试中，
+机器人前进约 2.79 m，未发生高度重置。MuJoCo 中记录到的最大角差约为左 6.10 度、
+右 5.81 度，说明碰撞动力学仍存在 Sim2Sim 差异。因此默认只绘制正负 4 度边界而不据此
+重置；需要严格复现 Isaac 终止时可传入 `--auto-reset-angle-deg 4`。
+
+### 2.18 同条件对比有无外骨骼的 hip-pitch 机械功率
+
+新建双模型并行对比程序：
+
+```text
+scripts/mujoco/compare_g1_hip_torque_exoskeleton.py
+```
+
+基线组使用无外骨骼 `g1_29dof_assist.xml` 和冻结行走策略；外骨骼组使用
+`g1_29dof_assist_exoskeleton.xml`、同一个冻结行走策略和辅助 PPO。两组具有相同的初始
+姿态、速度 command、`dt=0.001 s`、`decimation=20` 和运行时长。程序以 1 kHz 记录左右
+机器人本体左右 hip-pitch actuator 的力矩及关节角速度，并按
+`P = torque * joint_velocity` 计算带符号的机械功率，生成完整时序 CSV、汇总 CSV 和
+对比图。外骨骼 assist actuator 只参与控制，不计算、保存或绘制其功率。
+
+汇总统计默认忽略最初 1 秒启动过程，核心指标为净平均功率、平均正功率、平均负功率、
+正/负/净机械能和正/负峰值功率，不再使用平均绝对力矩作为结论。5 秒测试中，
+两组最终前进距离分别约 2.766 m 和 2.794 m；左髋平均正功率由 16.435 W 降至
+10.413 W（下降 36.64%），右髋由 12.569 W 增至 13.798 W（增加 9.78%）。该结果仅代表
+当前 `model_1000.pt`、0.7 m/s 指令和 1--5 秒统计窗口。双侧本体髋电机平均正功率合计由
+29.004 W 降至 24.211 W（下降 16.53%）。
+
 ## 3. 当前推荐使用的文件
 
 ### 无外骨骼模型
@@ -745,6 +868,130 @@ conda run --no-capture-output -n env_isaaclab_2 \
 脚本默认每 200 步报告一次两个辅助关节的最大绝对 actuator torque。可使用
 `--torque_report_interval 1` 每步检查，或使用 `--torque_report_interval 0` 关闭打印；
 无论是否打印，两个辅助关节仍保持零刚度、零阻尼和零 effort limit。
+
+### 4.9 训练和播放外骨骼辅助扭矩 PPO
+
+训练：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v0 \
+  --headless
+```
+
+小规模调试：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v0 \
+  --num_envs 1 --max_iterations 1 --headless
+```
+
+播放训练后的 checkpoint：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v0 \
+  --num_envs 16 \
+  --checkpoint /absolute/path/to/model_xxx.pt
+```
+
+### 4.10 单机器人播放并绘制外骨骼关节曲线
+
+实时播放和绘图：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play_g1_assist_exoskeleton_plot.py \
+  --checkpoint /absolute/path/to/model_xxx.pt \
+  --real-time
+```
+
+无窗口运行 20 秒并只保存 CSV/PNG：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play_g1_assist_exoskeleton_plot.py \
+  --checkpoint /absolute/path/to/model_xxx.pt \
+  --duration 20 --headless
+```
+
+如果省略 `--checkpoint`，脚本会从 `g1_assist_exoskeleton_ppo` 实验目录自动选择最新
+checkpoint。可通过 `--output_dir` 指定其他输出目录。
+
+### 4.11 外骨骼辅助策略 MuJoCo Sim2Sim
+
+启动 MuJoCo viewer、两个策略和实时曲线：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_assist_exoskeleton.py
+```
+
+无窗口快速运行并保存 CSV/PNG：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_assist_exoskeleton.py \
+  --headless --duration 20 --no-realtime
+```
+
+指定其他辅助导出策略：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_assist_exoskeleton.py \
+  --assist-policy /absolute/path/to/exported/policy.pt
+```
+
+启用与 Isaac 相同的 4 度角差自动重置：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_assist_exoskeleton.py \
+  --auto-reset-angle-deg 4
+```
+
+### 4.12 同条件比较有无外骨骼的 hip-pitch 机械功率
+
+默认比较 10 秒，并忽略前 1 秒启动数据：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/compare_g1_hip_torque_exoskeleton.py
+```
+
+指定工况和统计窗口：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/compare_g1_hip_torque_exoskeleton.py \
+  --vx 0.7 --vy 0.0 --yaw 0.0 \
+  --duration 20 --warmup 2
+```
+
+指定其他辅助策略：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/compare_g1_hip_torque_exoskeleton.py \
+  --assist-policy /absolute/path/to/exported/policy.pt
+```
+
+输出包括 `hip_pitch_power_timeseries.csv`、`hip_pitch_power_summary.csv` 和
+`hip_pitch_power_comparison.png`。CSV 同时保留力矩和角速度原始值，便于复核
+`P = torque * joint_velocity`。
 
 ## 5. 后续修改时的注意事项
 
