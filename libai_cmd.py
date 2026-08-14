@@ -101,4 +101,8 @@ python scripts/rsl_rl/train.py --task LeggedLab-Isaac-AMP-G1-assist-v0 --num_env
 
 python scripts/rsl_rl/train.py --task LeggedLab-Isaac-AMP-G1-assist-v0 --headless --max_iterations 50000 --num_envs 6000
 
+
+python scripts/rsl_rl/play.py --task LeggedLab-Isaac-AMP-G1-assist-Play-v0 --num_envs 16 --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_amp/2026-08-13_13-45-16/model_29400.pt
+
+
 '''

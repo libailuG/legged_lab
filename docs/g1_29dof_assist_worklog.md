@@ -268,6 +268,291 @@ usd/g1_29dof_assist/config.yaml
 
 转换器针对 `imu`、`d435_link` 和 `mid360_link` 发出了没有 mass、visual 或 collider 的警告。这些 link 在 URDF 中本来就是空 link，USD 仍成功生成。
 
+### 2.10 基于新 USD 建立独立 AMP 任务
+
+随后要求模仿以下原始任务：
+
+```text
+LeggedLab-Isaac-AMP-G1-v0
+LeggedLab-Isaac-AMP-G1-Play-v0
+```
+
+建立两个使用新 USD 的任务：
+
+```text
+LeggedLab-Isaac-AMP-G1-assist-v0
+LeggedLab-Isaac-AMP-G1-assist-Play-v0
+```
+
+特别要求重新建立新文件，不影响原始 G1 v0。因此没有修改：
+
+- `config/g1/` 中的原始 G1 环境配置
+- `legged_lab/assets/unitree.py` 中的 `UNITREE_G1_29DOF_CFG`
+- `LeggedLab-Isaac-AMP-G1-v0` 和 `LeggedLab-Isaac-AMP-G1-Play-v0` 的注册
+- 原始 G1 的日志目录 `logs/rsl_rl/g1_amp/`
+
+新建了完全独立的任务配置目录：
+
+```text
+source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_assist/
+├── __init__.py
+├── g1_assist_amp_env_cfg.py
+├── robot_cfg.py
+└── agents/
+    ├── __init__.py
+    └── rsl_rl_ppo_cfg.py
+```
+
+各文件职责如下：
+
+| 文件 | 作用 |
+|---|---|
+| `g1_assist/__init__.py` | 注册训练和播放两个 Gym 任务 |
+| `g1_assist_amp_env_cfg.py` | 建立训练和 Play 环境配置，只替换机器人资产 |
+| `robot_cfg.py` | 定义新 USD 路径和 assist 专用机器人配置 |
+| `agents/rsl_rl_ppo_cfg.py` | 继承 G1 AMP runner 参数，并使用独立实验名 |
+
+新任务使用的 USD：
+
+```text
+source/legged_lab/legged_lab/data/Robots/Unitree/g1_29dof_assist/
+usd/g1_29dof_assist/g1_29dof_assist.usd
+```
+
+新 runner 的实验名设置为：
+
+```text
+g1_assist_amp
+```
+
+因此日志和 checkpoint 写入：
+
+```text
+logs/rsl_rl/g1_assist_amp/
+```
+
+而不会混入原始 G1 的 `logs/rsl_rl/g1_amp/`。
+
+配置加载检查结果：
+
+| 任务 | USD | 默认环境数 | 参考动作重置 | 实验名 |
+|---|---|---:|---|---|
+| `G1-v0` | 原 G1 USD | 8192 | 开启 | `g1_amp` |
+| `G1-Play-v0` | 原 G1 USD | 48 | 关闭 | `g1_amp` |
+| `G1-assist-v0` | 新 assist USD | 8192 | 开启 | `g1_assist_amp` |
+| `G1-assist-Play-v0` | 新 assist USD | 48 | 关闭 | `g1_assist_amp` |
+
+使用 1 个环境运行了 1 次实际 AMP 训练迭代，验证了：
+
+- USD articulation 可以正常创建
+- 29 个动作关节全部加载
+- policy observation 为 96 维
+- critic observation 为 297 维
+- discriminator 和 demonstration observation 均为 `4 × 70`
+- Actor 输出维度为 29
+- AMP discriminator 可以正常前向和反向传播
+- checkpoint 可以正常保存
+
+第一次测试产生了独立测试日志和 `model_0.pt`，位于 `logs/rsl_rl/g1_assist_amp/` 下。
+
+### 2.11 判断增重后是否需要调整 PD
+
+之后询问了 assist 相比原始 G1 增重后是否需要调整 PD。
+
+结论是需要为 assist 建立独立 PD 配置。原因是质量和惯量约增至原来的 `2.27` 倍，而原始 PD 不变时，同样关节误差产生的控制力矩不变，关节加速度和响应速度会明显下降。
+
+可能出现的问题包括：
+
+- 关节动作响应变慢
+- 动作跟踪误差增大
+- 膝、髋和踝无法及时支撑身体
+- 策略输出经常接近最大动作
+- effort limit 饱和
+- AMP 训练收敛速度下降
+
+同时指出不能只增大 Kp 而不检查 effort limit。控制器即使计算出更大力矩，也会被原始力矩限制截断。
+
+### 2.12 为 assist 建立独立 PD 和 effort limit
+
+最终要求调整 assist 任务的 PD 和 effort limit。修改仅发生在：
+
+```text
+source/legged_lab/legged_lab/tasks/locomotion/amp/config/
+g1_assist/robot_cfg.py
+```
+
+原始 G1 的 `UNITREE_G1_29DOF_CFG` 仍然没有修改。
+
+assist 配置先通过 `deepcopy` 复制原始 G1 配置，再替换 USD 和 actuator 字典，确保新旧任务之间没有共享的可变配置。
+
+原始 G1 将 ankle、waist 和部分 arm joint 放在同一个执行器组，并共用 `25 Nm` 上限。为了避免手臂使用腿部所需的大力矩，新 assist 配置将 29 个关节拆成 5 个互不重叠的 actuator 组。
+
+最终参数如下：
+
+| Actuator 组 | 关节 | Kp | Kd | Effort limit | Velocity limit |
+|---|---|---:|---:|---:|---:|
+| `assist_hip_pitch_yaw_waist_yaw` | hip pitch/yaw | 180 | 3.0 | 200 Nm | 32 rad/s |
+| 同上 | waist yaw | 360 | 7.5 | 200 Nm | 32 rad/s |
+| `assist_hip_roll_knee` | hip roll | 180 | 3.0 | 316 Nm | 20 rad/s |
+| 同上 | knee | 270 | 6.0 | 316 Nm | 20 rad/s |
+| `assist_ankle_waist` | ankle | 72 | 3.0 | 57 Nm | 37 rad/s |
+| 同上 | waist roll/pitch | 72 | 7.5 | 57 Nm | 37 rad/s |
+| `assist_shoulder_elbow_wrist_roll` | shoulder/elbow/wrist roll | 56 | 1.3 | 38 Nm | 37 rad/s |
+| `assist_wrist_pitch_yaw` | wrist pitch/yaw | 56 | 1.3 | 8 Nm | 22 rad/s |
+
+调整原则：
+
+- 承重关节 Kp 约为原值的 `1.8` 倍
+- 承重关节 Kd 约为原值的 `1.5` 倍
+- 承重关节 effort limit 约按质量比例 `2.27` 倍放大
+- 上肢 Kp 约为原值的 `1.4` 倍
+- 上肢 Kd 约为原值的 `1.3` 倍
+- 上肢 effort limit 采用约 `1.5` 倍的温和增幅
+- 所有 actuator 的 armature 保持 `0.01`
+- 原始 velocity limit 保持不变
+
+修改后再次使用 1 个环境运行了 1 次 AMP 训练迭代。验证结果：
+
+- 5 个 actuator 组成功初始化
+- 29 个动作关节完整覆盖
+- 没有 actuator 正则表达式重叠或漏配错误
+- 调整后的 PD 和 effort limit 已写入实际运行保存的 `env.yaml`
+- AMP rollout、反向传播和 checkpoint 保存均成功
+- 原始 G1 配置仍没有代码差异
+
+测试运行中仍会看到 `imu_in_pelvis`、`imu_in_torso`、`d435_link` 和 `mid360_link` 的空 visual reference 警告。这来自生成 USD 时保留的空 link，不是 PD 或任务配置错误，也没有阻止训练运行。
+
+### 2.13 使用训练策略完成 Isaac Sim → MuJoCo Sim2Sim
+
+训练结果使用以下命令在 Isaac Sim 中检查，机器人已经可以行走：
+
+```bash
+python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-Play-v0 \
+  --num_envs 16 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_amp/2026-08-13_13-45-16/model_29400.pt
+```
+
+播放脚本导出的 TorchScript 策略为：
+
+```text
+/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_amp/
+2026-08-13_13-45-16/exported/policy.pt
+```
+
+在 `scripts/mujoco/` 中新增了 Sim2Sim 脚本：
+
+```text
+scripts/mujoco/sim2sim_g1_29dof_assist.py
+```
+
+脚本完成以下映射：
+
+- 加载导出的 TorchScript policy
+- 加载 `g1_29dof_assist.xml`
+- 构造与 Isaac 训练一致的 96 维 policy observation
+- 输出 29 维 joint-position action
+- 使用 `action_scale=0.25` 和 Isaac 默认关节姿态生成目标位置
+- 使用 assist 专用 Kp、Kd 和 effort limit 计算 MuJoCo torque
+- 根据关节名映射 Isaac policy 顺序和 MuJoCo joint/actuator 顺序
+- 支持速度命令、键盘控制、自动跌倒复位和无窗口测试
+
+策略接口验证结果：
+
+```text
+policy input:  (1, 96)
+policy output: (1, 29)
+actor observation normalization: Identity
+```
+
+实现时发现两个关键 Sim2Sim 差异。
+
+第一，Isaac/PhysX articulation 的实际关节顺序不是 URDF/MuJoCo 的树顺序。训练策略使用的顺序为：
+
+```text
+left_hip_pitch, right_hip_pitch, waist_yaw,
+left_hip_roll, right_hip_roll, waist_roll,
+left_hip_yaw, right_hip_yaw, waist_pitch,
+left_knee, right_knee,
+left_shoulder_pitch, right_shoulder_pitch,
+left_ankle_pitch, right_ankle_pitch,
+left_shoulder_roll, right_shoulder_roll,
+left_ankle_roll, right_ankle_roll,
+left_shoulder_yaw, right_shoulder_yaw,
+left_elbow, right_elbow,
+left_wrist_roll, right_wrist_roll,
+left_wrist_pitch, right_wrist_pitch,
+left_wrist_yaw, right_wrist_yaw
+```
+
+最初按 MuJoCo 树顺序直接传递 observation/action 时，机器人会立即跌倒。修正后，脚本以 Isaac 顺序组织 policy 输入输出，再通过关节名映射到 MuJoCo。
+
+第二，Isaac actuator 配置对所有活动关节设置了：
+
+```text
+armature = 0.01
+```
+
+MuJoCo XML 原先没有该 armature。缺少它时，即使只使用 PD 保持默认姿态，模型也会数值不稳定或快速跌倒。Sim2Sim 脚本在加载模型后将 29 个关节的 `dof_armature` 设置为 `0.01`。
+
+此外，MuJoCo 使用：
+
+```text
+physics dt = 0.002 s
+decimation = 10
+policy period = 0.020 s
+policy frequency = 50 Hz
+```
+
+策略周期仍与 Isaac 训练中的 `0.005 × 4 = 0.020 s` 一致，但更小的 MuJoCo 积分步长提高了高增益模型的稳定性。
+
+最终进行了 30 秒无窗口测试：
+
+```text
+command vx:       0.5 m/s
+simulated time:   30.0 s
+final x position: 15.018 m
+final height:     0.737 m
+automatic resets: 0
+```
+
+测试过程中机器人持续前进，没有跌倒、没有自动复位，也没有出现 MuJoCo 数值发散。随后成功启动了交互式 MuJoCo Viewer。
+
+### 2.14 使用原 29-DoF 策略播放 31-DoF 外骨骼 USD
+
+需求是使用带两个辅助关节的
+`g1_29dof_assist_exoskeleton.usd` 替换无外骨骼 USD 进行 Isaac Sim play，继续加载
+`model_29400.pt`，并令两个辅助关节不输出扭矩。
+
+为避免影响已有的 `play.py` 和 assist 任务配置，新建了独立脚本：
+
+```text
+scripts/rsl_rl/play_g1_assist_exoskeleton.py
+```
+
+脚本进行了以下隔离：
+
+1. 将机器人资产替换为 `g1_29dof_assist_exoskeleton.usd`，并保持 self-collision 开启。
+2. 原 hip actuator 改为只匹配 5 个实际受控关节，避免其通配表达式误匹配新增辅助关节。
+3. 为 `left_hip_pitch_assist_joint` 和 `right_hip_pitch_assist_joint` 设置独立被动 actuator：`stiffness=0`、`damping=0`、`effort_limit_sim=0`。
+4. policy action 明确限定为训练时的 29 个关节及原始顺序。
+5. policy、critic 和 AMP discriminator 的 joint position/velocity 观测均明确限定为原 29 个关节，避免 checkpoint 输入维度变化。
+6. 播放过程中读取 `applied_torque`，如果任一辅助关节输出超过 `1e-6 N·m`，脚本会直接报错。
+
+在 `env_isaaclab_2` 中用 1 个环境进行了 20 步无窗口验证。结果为：
+
+```text
+action shape: 29
+policy observation shape: 96
+critic observation shape: 297
+discriminator observation shape: 4 x 70
+model output shape: 29
+assist actuator torque: 0.000e+00 N.m（连续 20 步）
+```
+
+checkpoint 成功加载，测试进程正常退出。USD 加载时仍会报告 imu、D435 和 Mid360 的 visual
+reference warning，但不影响 articulation、策略维度和本次零扭矩验证。
+
 ## 3. 当前推荐使用的文件
 
 ### 无外骨骼模型
@@ -286,6 +571,24 @@ g1_29dof_assist_exoskeleton.xml
 ```
 
 目前只为无外骨骼版本重新生成了以 `g1_29dof_assist` 命名的新 USD。目录中原先的 `usd/g1_29dof.usd` 是早期资产，不应与新生成的 USD 混淆。
+
+### Assist AMP 任务配置
+
+```text
+source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_assist/
+```
+
+训练任务：
+
+```text
+LeggedLab-Isaac-AMP-G1-assist-v0
+```
+
+播放任务：
+
+```text
+LeggedLab-Isaac-AMP-G1-assist-Play-v0
+```
 
 ## 4. 常用命令
 
@@ -334,6 +637,115 @@ conda run --no-capture-output -n env_isaaclab_2 \
   --headless
 ```
 
+### 4.5 训练 G1 assist AMP 任务
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-v0 \
+  --headless
+```
+
+调试时可减少环境数和训练次数：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-v0 \
+  --num_envs 1 \
+  --max_iterations 1 \
+  --headless
+```
+
+### 4.6 播放 G1 assist AMP checkpoint
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-Play-v0
+```
+
+显式指定 checkpoint：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-Play-v0 \
+  --checkpoint /absolute/path/to/model.pt
+```
+
+### 4.7 运行 G1 assist Sim2Sim
+
+默认加载本次 `model_29400.pt` 导出的 policy：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_29dof_assist.py
+```
+
+Viewer 键盘控制：
+
+| 按键 | 功能 |
+|---|---|
+| `W` / `S` | 前进速度增加/减少 0.1 m/s |
+| `A` / `D` | 横向速度增加/减少 0.1 m/s |
+| `Q` / `E` | 偏航角速度增加/减少 0.1 rad/s |
+| `Space` | 所有速度命令归零 |
+| `R` | 重置机器人 |
+
+指定初始速度命令：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_29dof_assist.py \
+  --vx 1.0 --vy 0.0 --yaw 0.0
+```
+
+无窗口快速验证：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_29dof_assist.py \
+  --headless --duration 30 --no-realtime --auto-reset-height 0
+```
+
+使用其他导出策略：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_29dof_assist.py \
+  --policy /absolute/path/to/policy.pt
+```
+
+### 4.8 使用外骨骼 USD 播放 model_29400.pt
+
+脚本已经内置任务名、外骨骼 USD 路径和本次 checkpoint 路径，因此直接运行即可：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play_g1_assist_exoskeleton.py
+```
+
+默认启动 16 个环境。无窗口有限步数验证命令：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play_g1_assist_exoskeleton.py \
+  --headless --num_envs 1 --max_steps 200
+```
+
+脚本默认每 200 步报告一次两个辅助关节的最大绝对 actuator torque。可使用
+`--torque_report_interval 1` 每步检查，或使用 `--torque_report_interval 0` 关闭打印；
+无论是否打印，两个辅助关节仍保持零刚度、零阻尼和零 effort limit。
+
 ## 5. 后续修改时的注意事项
 
 1. 修改 `mass` 时，应根据物体的变化同步修改 `inertia`；collision 不决定质量。
@@ -343,3 +755,10 @@ conda run --no-capture-output -n env_isaaclab_2 \
 5. 如果希望无外骨骼版本仍保持 `80 kg`，还需要将缺少的 `0.2 kg` 重新按比例分配到其余 link，并同步惯量。
 6. `ankle_roll_link` 中的球形 collision 是脚底接触点，不建议在没有替代接触几何的情况下删除。
 7. `usd/g1_29dof_assist/` 是当前无外骨骼模型的新 USD；上一级旧的 `usd/g1_29dof.usd` 来自更早的模型转换。
+8. Assist 任务使用独立目录 `config/g1_assist/`。后续调参应修改这里，不应修改 `config/g1/` 或全局 `UNITREE_G1_29DOF_CFG`。
+9. PD 增大后应监控关节力矩饱和、动作抖动、接触冲击和训练稳定性。当前参数是基于质量比例的合理起点，不是经过长期训练后的最终最优参数。
+10. 如果要对应真实机器人，`effort_limit_sim` 必须重新约束到真实电机和减速器允许的持续/峰值力矩，不能直接使用当前仿真放大值。
+11. 如果后续重新生成 USD，应重新运行 1 环境初始化测试，确认 articulation、29 个动作关节和 contact sensor 仍能正常加载。
+12. Sim2Sim 的 policy joint 顺序必须使用 Isaac articulation 的实际顺序，不能假设与 URDF/MuJoCo 顺序一致。
+13. MuJoCo 中必须保留等效 `armature=0.01`；删除该设置会明显降低高 PD 模型的数值稳定性。
+14. MuJoCo 的物理步长采用 `0.002 s`，但策略仍以 50 Hz 运行。不要仅修改 dt 而忘记同步调整 decimation。
