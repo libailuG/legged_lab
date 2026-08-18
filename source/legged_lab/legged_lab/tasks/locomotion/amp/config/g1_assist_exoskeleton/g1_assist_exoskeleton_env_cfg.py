@@ -85,7 +85,7 @@ class AssistObservationsCfg:
 
 @configclass
 class AssistRewardsCfg:
-    """Only the three requested reward objectives are enabled."""
+    """Assist rewards including explicit standing and joint-mismatch behavior."""
 
     assist_output_smoothness = RewTerm(func=mdp.action_rate_l2, weight=-0.05)
     assist_torque_alignment = RewTerm(
@@ -95,6 +95,36 @@ class AssistRewardsCfg:
             "hip_cfg": HIP_PITCH_JOINT_CFG,
             "assist_cfg": ASSIST_JOINT_CFG,
             "torque_limit": 8.0,
+            "command_name": "base_velocity",
+            "moving_threshold": 0.05,
+            "yaw_scale": 0.3,
+        },
+    )
+    assist_torque_zero_when_standing = RewTerm(
+        func=mdp.assist_torque_zero_when_standing,
+        weight=-1.0,
+        params={
+            "assist_cfg": ASSIST_JOINT_CFG,
+            "torque_limit": 8.0,
+            "command_name": "base_velocity",
+            "moving_threshold": 0.05,
+            "yaw_scale": 0.3,
+        },
+    )
+    assist_hip_angle_error = RewTerm(
+        func=mdp.assist_hip_angle_error_l2,
+        weight=-5.0,
+        params={
+            "hip_cfg": HIP_PITCH_JOINT_CFG,
+            "assist_cfg": ASSIST_JOINT_CFG,
+        },
+    )
+    assist_hip_velocity_error = RewTerm(
+        func=mdp.assist_hip_velocity_error_l2,
+        weight=-0.05,
+        params={
+            "hip_cfg": HIP_PITCH_JOINT_CFG,
+            "assist_cfg": ASSIST_JOINT_CFG,
         },
     )
     termination_penalty = RewTerm(func=mdp.is_terminated, weight=-200.0)
@@ -153,6 +183,7 @@ class G1AssistExoskeletonEnvCfg(G1AssistAmpEnvCfg):
         self.sim.dt = 0.001
         self.decimation = 20
         self.episode_length_s = 20.0
+        self.commands.base_velocity.rel_standing_envs = 0.2
         self.sim.render_interval = self.decimation
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt

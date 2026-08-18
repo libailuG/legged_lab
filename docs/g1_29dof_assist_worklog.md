@@ -676,6 +676,22 @@ scripts/mujoco/compare_g1_hip_torque_exoskeleton.py
 当前 `model_1000.pt`、0.7 m/s 指令和 1--5 秒统计窗口。双侧本体髋电机平均正功率合计由
 29.004 W 降至 24.211 W（下降 16.53%）。
 
+### 2.19 抑制站立状态下的辅助关节相互对抗
+
+按后续要求只修改独立外骨骼任务的训练分布和奖励，不修改原版 G1、冻结行走策略、观测
+维度或动作门控：
+
+1. 将 `base_velocity.rel_standing_envs` 从 `0.02` 提高到 `0.2`，使约 20% 的训练环境使用
+   站立指令。
+2. `assist_torque_alignment` 增加运动指令门控。平面速度与按 `0.3` 缩放的 yaw-rate 合成
+   运动量，低于 `0.05` 时关闭力矩对齐奖励，避免站立时追随本体姿态保持力矩。
+3. 新增站立零辅助扭矩惩罚，使用按 `8 N.m` 归一化的辅助扭矩平方，权重 `-1.0`。
+4. 新增 assist 与本体 hip-pitch 的连续角度差平方惩罚，权重 `-5.0`。
+5. 新增 assist 与本体 hip-pitch 的连续速度差平方惩罚，权重 `-0.05`。
+
+修改后策略网络仍保持 `150 -> 256 -> 64 -> 16 -> 2`。使用 4 个环境完成 1 次训练迭代
+验证，Reward Manager 正常注册 6 个奖励项，任务初始化和 PPO 更新均成功。
+
 ## 3. 当前推荐使用的文件
 
 ### 无外骨骼模型
@@ -992,6 +1008,25 @@ conda run --no-capture-output -n env_isaaclab_2 \
 输出包括 `hip_pitch_power_timeseries.csv`、`hip_pitch_power_summary.csv` 和
 `hip_pitch_power_comparison.png`。CSV 同时保留力矩和角速度原始值，便于复核
 `P = torque * joint_velocity`。
+
+### 4.13 从站立奖励修改前的 checkpoint 继续训练
+
+网络输入输出和 MLP 结构没有改变，可以加载原 run 的完整 PPO checkpoint 继续训练：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v0 \
+  --headless --num_envs 6000 --max_iterations 5000 \
+  --resume \
+  --load_run 2026-08-14_14-00-08 \
+  --checkpoint model_2000.pt
+```
+
+继续训练必须加载 run 根目录中的 `model_2000.pt`，不能用仅供推理的
+`exported/policy.pt`，因为后者不包含 optimizer、critic 等训练状态。
 
 ## 5. 后续修改时的注意事项
 

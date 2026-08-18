@@ -157,4 +157,43 @@ python scripts/rsl_rl/play_g1_assist_exoskeleton_plot.py \
   --real-time
 
 
+python scripts/rsl_rl/play.py --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v0 --num_envs 16 --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_ppo/2026-08-14_14-00-08/model_2000.pt
+
+
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_ppo/2026-08-14_14-00-08/exported/policy.pt
+
+  
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton.py   --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_ppo/2026-08-14_14-00-08/exported/policy.pt
+
+运动时还可以，但站立时有点力气互怼
+
+
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v0 \
+  --headless \
+  --resume \
+  --load_run 2026-08-14_14-00-08 \
+  --checkpoint model_2000.pt \
+  --max_iterations 2000 \
+  --num_envs 6000
+
+
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v0 \
+  --headless \
+  --num_envs 6000 \
+  --max_iterations 5000 \
+  --resume \
+  --load_run 2026-08-14_14-00-08 \
+  --checkpoint model_2000.pt
+
+  
+
+python scripts/rsl_rl/play.py --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v0 --num_envs 16 --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_ppo/2026-08-17_10-05-41/model_4400.pt
+
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_ppo/2026-08-17_10-05-41/exported/policy.pt
+
+
 '''
