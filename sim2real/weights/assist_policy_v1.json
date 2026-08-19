@@ -1,0 +1,16 @@
+{
+  "source_policy": "/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v1_ppo/2026-08-18_13-27-09/exported/policy.pt",
+  "weights_file": "assist_policy_v1.npz",
+  "dtype": "float32",
+  "input_order": "25 oldest-to-newest [left_vel,right_vel], then 25 oldest-to-newest [left_torque,right_torque]",
+  "normalization": "(input - obs_mean) / (obs_std + normalizer_eps)",
+  "layers": [
+    100,
+    256,
+    64,
+    16,
+    2
+  ],
+  "hidden_activation": "ELU(alpha=1.0)",
+  "output_activation": "none (clip to [-1,1] before multiplying by 8 Nm)"
+}

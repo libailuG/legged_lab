@@ -196,4 +196,55 @@ python scripts/mujoco/sim2sim_g1_assist_exoskeleton.py \
   --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_ppo/2026-08-17_10-05-41/exported/policy.pt
 
 
+##
+新建任务  LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v1 和  LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v1
+
+
+
+  python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v1 \
+  --headless \
+  --max_iterations 5000 \
+  --num_envs 6000
+
+本设备采用强化学习作为主体，搭建人形机器人训练框架，采集丰富的人行走轨迹，进行动作重映射，使用模仿学习。使得人形机器人行走模型接近于人体。
+再采用“冻结行走策略+独立外骨骼策略”的分层结构，采用减少人形机器人能耗的训练策略，实现本外骨骼助力策略。
+
+python scripts/rsl_rl/play.py --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v1 --num_envs 16 --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v1_ppo/2026-08-18_13-27-09/model_4999.pt
+
+ python scripts/rsl_rl/play_g1_assist_exoskeleton_plot.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v1 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v1_ppo/2026-08-18_13-27-09/model_4999.pt \
+  --real-time \
+  'env.viewer.eye=[4.0,4.0,4.0]' \
+  'env.viewer.lookat=[0.0,0.0,1.0]'
+
+
+
+  env.viewer.origin_type=asset_root \
+  env.viewer.asset_name=robot \
+  env.viewer.env_index=0 \
+  'env.viewer.eye=[3.0,-3.0,1.5]' \
+  'env.viewer.lookat=[0.0,0.0,0.8]'
+
+
+  env.viewer.origin_type=world \
+  'env.viewer.eye=[4.0,4.0,4.0]' \
+  'env.viewer.lookat=[0.0,0.0,1.0]'
+
+ env.viewer.origin_type=asset_root \
+  env.viewer.asset_name=robot \
+  env.viewer.env_index=0 \
+  'env.viewer.eye=[3.0,-3.0,1.5]' \
+  'env.viewer.lookat=[0.0,0.0,0.8]'
+
+env.viewer.origin_type=asset_body \
+env.viewer.asset_name=robot \
+env.viewer.body_name=torso_link \
+'env.viewer.eye=[3.0,-3.0,1.0]' \
+'env.viewer.lookat=[0.0,0.0,0.0]'
+
+
+
+
 '''

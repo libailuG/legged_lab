@@ -692,6 +692,69 @@ scripts/mujoco/compare_g1_hip_torque_exoskeleton.py
 修改后策略网络仍保持 `150 -> 256 -> 64 -> 16 -> 2`。使用 4 个环境完成 1 次训练迭代
 验证，Reward Manager 正常注册 6 个奖励项，任务初始化和 PPO 更新均成功。
 
+### 2.20 新建完全独立的外骨骼 v1 任务
+
+为避免后续实验修改影响 v0，新建独立配置包：
+
+```text
+source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_assist_exoskeleton_v1/
+```
+
+该目录包含自己的任务注册、环境配置、robot cfg、PPO cfg，以及 actions、observations、
+rewards、terminations 四类 MDP 文件，不导入 `g1_assist_exoskeleton` v0 配置包。v1 当前
+参数和行为复制自当前 v0，但使用独立类名和独立实验目录
+`logs/rsl_rl/g1_assist_exoskeleton_v1_ppo/`。机器人 USD 和冻结行走策略作为只读资产继续
+共用。
+
+新增任务：
+
+```text
+LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v1
+LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v1
+```
+
+两个任务创建时均完成实际初始化和 1 次 PPO 迭代验证，动作维度为 2、初始观测维度为
+150，初始网络为 `150 -> 256 -> 64 -> 16 -> 2`，6 个奖励项均正常注册。
+
+### 2.21 v1 删除关节角度观察并启用观察噪声
+
+只修改 v1 的 `AssistObservationGroup`：删除左右 assist joint position 的 25 帧历史，保留
+左右 assist joint velocity 和 commanded assist torque 的 25 帧历史。因此 Actor/Critic
+观察维度从 150 变为 100，网络输入层自动变为：
+
+```text
+100 -> 256 -> 64 -> 16 -> output
+```
+
+设置 `enable_corruption=True`，并加入独立均匀加性噪声：
+
+```text
+assist joint velocity: U(-0.5, 0.5) rad/s
+commanded assist torque: U(-0.2, 0.2) N.m
+```
+
+使用 4 个环境完成一次 PPO 迭代验证，Observation Manager 显示 policy 和 critic 均为
+100 维。因为输入层已经变化，旧的 150 维 v1/v0 checkpoint 不能直接加载到该 v1 网络，
+需要重新训练。
+
+### 2.22 外骨骼 v1 MuJoCo Sim2Sim
+
+新建独立脚本：
+
+```text
+scripts/mujoco/sim2sim_g1_assist_exoskeleton_v1.py
+```
+
+脚本沿用相同的外骨骼 MuJoCo XML 和冻结 29 关节行走策略，但按 v1 顺序构造 100 维辅助
+观察：先拼接 25 帧左右 assist joint velocity，再拼接 25 帧左右 commanded assist torque，
+不再包含 joint position。物理步长为 `0.001 s`、decimation 为 20，策略频率为 50 Hz。
+
+从 `2026-08-18_13-27-09/model_4999.pt` 导出 TorchScript 策略到
+`exported/policy.pt`。无窗口无实时限制运行 5 秒验证成功，机器人前进约 2.83 m、未发生
+高度重置，并生成 CSV 和 PNG。默认使用无人工观察噪声的部署评估模式；传入
+`--observation-noise` 后会复现训练中的速度 `±0.5 rad/s` 和扭矩 `±0.2 N.m` 均匀噪声，
+该模式也已完成短时验证。
+
 ## 3. 当前推荐使用的文件
 
 ### 无外骨骼模型
@@ -1027,6 +1090,64 @@ conda run --no-capture-output -n env_isaaclab_2 \
 
 继续训练必须加载 run 根目录中的 `model_2000.pt`，不能用仅供推理的
 `exported/policy.pt`，因为后者不包含 optimizer、critic 等训练状态。
+
+### 4.14 独立 v1 任务训练与播放
+
+训练 v1：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v1 \
+  --headless --max_iterations 5000 --num_envs 6000
+```
+
+播放 v1：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v1 \
+  --num_envs 1 \
+  --checkpoint /absolute/path/to/g1_assist_exoskeleton_v1_ppo/model_xxx.pt
+```
+
+### 4.15 外骨骼 v1 MuJoCo Sim2Sim
+
+打开 MuJoCo viewer：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v1.py
+```
+
+无窗口快速运行 20 秒：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v1.py \
+  --headless --duration 20 --no-realtime
+```
+
+复现训练观察噪声：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v1.py \
+  --observation-noise --seed 42
+```
+
+指定其他 v1 导出策略：
+
+```bash
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v1.py \
+  --assist-policy /absolute/path/to/exported/policy.pt
+```
 
 ## 5. 后续修改时的注意事项
 
