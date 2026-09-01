@@ -247,4 +247,49 @@ env.viewer.body_name=torso_link \
 
 
 
+  python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2 \
+  --num_envs 8000 \
+  --headless
+
+
+
+  python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2 \
+  --checkpoint logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-08-31_10-43-42/model_2000.pt \
+  --num_envs 16
+
+  
+
+
+
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton_2.py
+
+
+
+调整任务 LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2
+
+obs 加入角度
+reward 
+
+  python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v1 \
+  --num_envs 8000 \
+  --headless
+
+  
+
+
+conda run --no-capture-output -n env_isaaclab_2 \
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2 \
+  --num_envs 4096 \
+  --headless \
+  --max_iterations 2000
+
+
+
+
+
+
 '''
