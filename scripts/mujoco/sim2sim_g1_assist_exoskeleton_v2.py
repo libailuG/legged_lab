@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Run the frozen gait policy and trained v2 assist policy in MuJoCo.
+"""Run the frozen gait policy and optional trained v2 assist policy in MuJoCo.
 
 The two additional mechanism joints are held at zero by per-physics-step PD
 controllers, independently of the learned gait and hip-assist policies.
+Pass ``--disable-assist`` to command zero torque at both hip-assist actuators.
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ from sim2sim_g1_29dof_assist import (
 )
 from sim2sim_g1_assist_exoskeleton import (
     ASSIST_ACTION_SCALE,
-    DECIMATION,
     SIM_DT,
     SIDES,
     build_indices as build_base_indices,
@@ -53,13 +53,16 @@ DEFAULT_GAIT_POLICY = (
 )
 DEFAULT_ASSIST_POLICY = (
     PROJECT_ROOT
-    / "logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-08-31_10-43-42/exported/policy.pt"
+    / "logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-01_10-02-55/exported/policy.pt"
 )
 
+DECIMATION = 10
 ASSIST_HISTORY_LENGTH = 25
-ASSIST_OBSERVATIONS = 2 * 2 * ASSIST_HISTORY_LENGTH
+ASSIST_OBSERVATIONS = 3 * 2 * ASSIST_HISTORY_LENGTH
+ASSIST_POSITION_NOISE = np.deg2rad(0.5)
 ASSIST_VELOCITY_NOISE = 0.5
 ASSIST_TORQUE_NOISE = 0.2
+ASSIST_TORQUE_RATE_LIMIT = 40.0
 
 EXTRA_JOINT_NAMES = (
     "pelvis_rear_upper_box_assist_joint",
@@ -76,6 +79,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--gait-policy", type=Path, default=DEFAULT_GAIT_POLICY)
     parser.add_argument("--assist-policy", type=Path, default=DEFAULT_ASSIST_POLICY)
+    parser.add_argument(
+        "--assist-numpy-policy",
+        type=Path,
+        default=None,
+        help="Use exported NumPy assist weights instead of the assist TorchScript policy.",
+    )
+    parser.add_argument(
+        "--disable-assist",
+        action="store_true",
+        help=(
+            "Disable the learned hip-assist policy and command 0 Nm at both "
+            "assist actuators. Gait control and rear mechanism PD remain enabled."
+        ),
+    )
+    parser.add_argument(
+        "--assist-torque-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Final multiplier applied only when writing the assist actuator command "
+            "(default: 1.0). Policy inference, observations, torque history, and the "
+            f"40 Nm/s target slew limiter are unchanged; final output is +/-{ASSIST_ACTION_SCALE:g} Nm."
+        ),
+    )
     parser.add_argument("--vx", type=float, default=0.7, help="Initial forward command in m/s.")
     parser.add_argument("--vy", type=float, default=0.0, help="Initial lateral command in m/s.")
     parser.add_argument("--yaw", type=float, default=0.0, help="Initial yaw-rate command in rad/s.")
@@ -90,7 +117,7 @@ def parse_args() -> argparse.Namespace:
         "--observation-noise",
         action="store_true",
         help=(
-            "Apply the v2 training noise to velocity and torque observations. "
+            "Apply the v2 training noise to position, velocity, and torque observations. "
             "Disabled by default for deployment-style evaluation."
         ),
     )
@@ -106,13 +133,22 @@ def parse_args() -> argparse.Namespace:
 
 
 class V2AssistHistory:
-    """Oldest-to-newest v2 history: 25 velocity samples then 25 torque samples."""
+    """Oldest-to-newest v2 history: position, velocity, then torque samples."""
 
     def __init__(self, add_noise: bool, seed: int):
+        self.position = deque(maxlen=ASSIST_HISTORY_LENGTH)
         self.velocity = deque(maxlen=ASSIST_HISTORY_LENGTH)
         self.torque = deque(maxlen=ASSIST_HISTORY_LENGTH)
         self.add_noise = add_noise
         self.rng = np.random.default_rng(seed)
+
+    def _position_sample(self, position: np.ndarray) -> np.ndarray:
+        sample = np.asarray(position, dtype=np.float32).copy()
+        if self.add_noise:
+            sample += self.rng.uniform(
+                -ASSIST_POSITION_NOISE, ASSIST_POSITION_NOISE, size=2
+            ).astype(np.float32)
+        return sample
 
     def _velocity_sample(self, velocity: np.ndarray) -> np.ndarray:
         sample = np.asarray(velocity, dtype=np.float32).copy()
@@ -131,21 +167,23 @@ class V2AssistHistory:
         return sample
 
     def reset(self, position: np.ndarray, velocity: np.ndarray) -> None:
-        del position
+        self.position.clear()
         self.velocity.clear()
         self.torque.clear()
         for _ in range(ASSIST_HISTORY_LENGTH):
+            self.position.append(self._position_sample(position))
             self.velocity.append(self._velocity_sample(velocity))
             self.torque.append(self._torque_sample(np.zeros(2, dtype=np.float32)))
 
     def append(self, position: np.ndarray, velocity: np.ndarray, torque: np.ndarray) -> None:
-        del position
+        self.position.append(self._position_sample(position))
         self.velocity.append(self._velocity_sample(velocity))
         self.torque.append(self._torque_sample(torque))
 
     def observation(self) -> np.ndarray:
         observation = np.concatenate(
             (
+                np.asarray(self.position, dtype=np.float32).reshape(-1),
                 np.asarray(self.velocity, dtype=np.float32).reshape(-1),
                 np.asarray(self.torque, dtype=np.float32).reshape(-1),
             )
@@ -194,6 +232,26 @@ def configure_extra_joint_limits(model, indices: dict[str, object]) -> None:
     model.actuator_ctrlrange[actuator_ids] = ranges
 
 
+def configure_policy_joint_effort_limits(model, indices: dict[str, object]) -> None:
+    """Override URDF-era limits with the Isaac gait actuator effort limits."""
+    actuator_ids = np.asarray(indices["policy_actuator"], dtype=int)
+    if actuator_ids.size != EFFORT_LIMIT.size:
+        raise ValueError(
+            f"Expected {EFFORT_LIMIT.size} gait actuators, got {actuator_ids.size}"
+        )
+    joint_ids = model.actuator_trnid[actuator_ids, 0].astype(int)
+    if np.any(joint_ids < 0):
+        raise ValueError("Every gait actuator must be attached to a joint")
+    ranges = np.column_stack((-EFFORT_LIMIT, EFFORT_LIMIT))
+    # MuJoCo applies joint-level actuator-force limits after ctrl clipping.  The
+    # XML retains the original URDF limits (for example, 88 N.m at the hip),
+    # while the frozen gait policy was trained with the larger Isaac limits.
+    model.jnt_actfrclimited[joint_ids] = 1
+    model.jnt_actfrcrange[joint_ids] = ranges
+    model.actuator_ctrllimited[actuator_ids] = 1
+    model.actuator_ctrlrange[actuator_ids] = ranges
+
+
 def reset_robot(mujoco, model, data, indices, history: V2AssistHistory) -> None:
     """Reset the base controller state and explicitly zero the extra joints."""
     reset_base_robot(mujoco, model, data, indices, history)
@@ -215,11 +273,23 @@ def main() -> None:
     args = parse_args()
     model_path = require_file(args.model, "MuJoCo model")
     gait_policy_path = require_file(args.gait_policy, "Gait TorchScript policy")
-    assist_policy_path = require_file(args.assist_policy, "V2 assist TorchScript policy")
+    assist_policy_path = None
+    assist_numpy_policy_path = None
+    if not args.disable_assist:
+        if args.assist_numpy_policy is None:
+            assist_policy_path = require_file(
+                args.assist_policy, "V2 assist TorchScript policy"
+            )
+        else:
+            assist_numpy_policy_path = require_file(
+                args.assist_numpy_policy, "V2 assist NumPy policy"
+            )
     if args.headless and args.duration is None:
         args.duration = 10.0
     if args.duration is not None and args.duration <= 0.0:
         raise ValueError("--duration must be greater than zero")
+    if not math.isfinite(args.assist_torque_scale) or args.assist_torque_scale < 0.0:
+        raise ValueError("--assist-torque-scale must be a finite non-negative number")
 
     import mujoco
     import torch
@@ -231,20 +301,43 @@ def main() -> None:
     import matplotlib.pyplot as plt
 
     gait_policy = torch.jit.load(str(gait_policy_path), map_location="cpu")
-    assist_policy = torch.jit.load(str(assist_policy_path), map_location="cpu")
     gait_policy.eval()
-    assist_policy.eval()
     with torch.inference_mode():
         gait_test_output = gait_policy(torch.zeros(1, NUM_OBSERVATIONS))
-        assist_test_output = assist_policy(torch.zeros(1, ASSIST_OBSERVATIONS))
     if tuple(gait_test_output.shape) != (1, NUM_ACTIONS):
         raise ValueError("Frozen gait policy must map 96 observations to 29 actions")
-    if tuple(assist_test_output.shape) != (1, 2):
-        raise ValueError("V2 assist policy must map 100 observations to 2 actions")
+
+    assist_policy = None
+    assist_policy_is_numpy = False
+    if assist_policy_path is not None:
+        assist_policy = torch.jit.load(str(assist_policy_path), map_location="cpu")
+        assist_policy.eval()
+        with torch.inference_mode():
+            assist_test_output = assist_policy(torch.zeros(1, ASSIST_OBSERVATIONS))
+        if tuple(assist_test_output.shape) != (1, 2):
+            raise ValueError(
+                f"V2 assist policy must map {ASSIST_OBSERVATIONS} observations to 2 actions"
+            )
+    elif assist_numpy_policy_path is not None:
+        import sys
+
+        numpy_policy_dir = PROJECT_ROOT / "sim2real/g1_assist_exoskeleton_v2"
+        if str(numpy_policy_dir) not in sys.path:
+            sys.path.insert(0, str(numpy_policy_dir))
+        from numpy_assist_policy import NumpyAssistPolicy
+
+        assist_policy = NumpyAssistPolicy(assist_numpy_policy_path)
+        assist_test_output = assist_policy(np.zeros(ASSIST_OBSERVATIONS, dtype=np.float32))
+        if assist_test_output.shape != (2,):
+            raise ValueError(
+                f"V2 NumPy assist policy must map {ASSIST_OBSERVATIONS} observations to 2 actions"
+            )
+        assist_policy_is_numpy = True
 
     model = mujoco.MjModel.from_xml_path(str(model_path))
     model.opt.timestep = SIM_DT
     indices = build_indices(mujoco, model)
+    configure_policy_joint_effort_limits(model, indices)
     configure_extra_joint_limits(model, indices)
     model.dof_armature[indices["policy_qvel"]] = 0.01
     data = mujoco.MjData(model)
@@ -261,7 +354,15 @@ def main() -> None:
     output_dir = (
         args.output_dir.expanduser().resolve()
         if args.output_dir is not None
-        else assist_policy_path.parent.parent / "sim2sim_analysis_exoskeleton_2"
+        else (
+            PROJECT_ROOT / "logs/sim2sim_analysis_exoskeleton_2_no_assist"
+            if assist_policy is None
+            else (
+                assist_numpy_policy_path.parent.parent / "output"
+                if assist_numpy_policy_path is not None
+                else assist_policy_path.parent.parent / "sim2sim_analysis_exoskeleton_2"
+            )
+        )
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / "g1_assist_exoskeleton_2_sim2sim.csv"
@@ -328,10 +429,24 @@ def main() -> None:
 
     print(f"Model:         {model_path}")
     print(f"Gait policy:   {gait_policy_path}")
-    print(f"V2 policy:     {assist_policy_path}")
-    print(f"Assist obs:    {ASSIST_OBSERVATIONS} (25 velocity + 25 torque samples)")
+    assist_mode = "disabled (0 Nm)" if args.disable_assist else (
+        "NumPy policy" if assist_policy_is_numpy else "TorchScript policy"
+    )
+    loaded_policy_path = assist_numpy_policy_path or assist_policy_path
+    print(f"Assist mode:   {assist_mode}")
+    print(f"V2 policy:     {loaded_policy_path if loaded_policy_path else 'not loaded'}")
+    print(f"Assist scale:  {args.assist_torque_scale:g}")
+    print(
+        f"Assist obs:    {ASSIST_OBSERVATIONS} "
+        "(25 position + 25 velocity + 25 torque samples)"
+    )
     print(f"Obs noise:     {'enabled' if args.observation_noise else 'disabled'}")
-    print(f"Control:       dt={SIM_DT}, decimation={DECIMATION}, policy rate=50 Hz")
+    print(
+        f"Control:       dt={SIM_DT}, decimation={DECIMATION}, "
+        f"policy rate={1.0 / (SIM_DT * DECIMATION):g} Hz"
+    )
+    print(f"Torque slew:   {ASSIST_TORQUE_RATE_LIMIT:g} Nm/s")
+    print(f"Gait effort:   Isaac limits applied to {EFFORT_LIMIT.size} joints")
     print(
         "Extra PD:      "
         f"box target=0 kp={EXTRA_KP[0]:g} kd={EXTRA_KD[0]:g} limit={EXTRA_EFFORT_LIMIT[0]:g}; "
@@ -390,18 +505,33 @@ def main() -> None:
                     command,
                     last_gait_action,
                 )
-                assist_obs = history.observation()
                 with torch.inference_mode():
                     gait_action_tensor = gait_policy(torch.from_numpy(gait_obs).unsqueeze(0))
-                    assist_action_tensor = assist_policy(
-                        torch.from_numpy(assist_obs).unsqueeze(0)
-                    )
                 last_gait_action = gait_action_tensor.squeeze(0).numpy().astype(np.float64)
-                assist_action = np.clip(
-                    assist_action_tensor.squeeze(0).numpy(), -1.0, 1.0
-                )
                 gait_target = DEFAULT_JOINT_POS + ACTION_SCALE * last_gait_action
-                assist_torque = ASSIST_ACTION_SCALE * assist_action.astype(np.float64)
+                if assist_policy is None:
+                    assist_torque.fill(0.0)
+                else:
+                    assist_obs = history.observation()
+                    if assist_policy_is_numpy:
+                        assist_action = np.clip(assist_policy(assist_obs), -1.0, 1.0)
+                    else:
+                        with torch.inference_mode():
+                            assist_action_tensor = assist_policy(
+                                torch.from_numpy(assist_obs).unsqueeze(0)
+                            )
+                        assist_action = np.clip(
+                            assist_action_tensor.squeeze(0).numpy(), -1.0, 1.0
+                        )
+                    assist_torque_target = (
+                        ASSIST_ACTION_SCALE * assist_action.astype(np.float64)
+                    )
+                    max_torque_delta = ASSIST_TORQUE_RATE_LIMIT * SIM_DT * DECIMATION
+                    assist_torque += np.clip(
+                        assist_torque_target - assist_torque,
+                        -max_torque_delta,
+                        max_torque_delta,
+                    )
                 control_step += 1
 
             joint_pos = data.qpos[indices["policy_qpos"]]
@@ -413,7 +543,9 @@ def main() -> None:
             )
             data.ctrl[indices["policy_actuator"]] = gait_torque
             data.ctrl[indices["assist_actuator"]] = np.clip(
-                assist_torque, -ASSIST_ACTION_SCALE, ASSIST_ACTION_SCALE
+                args.assist_torque_scale * assist_torque,
+                -ASSIST_ACTION_SCALE,
+                ASSIST_ACTION_SCALE,
             )
             data.ctrl[indices["extra_actuator"]] = extra_joint_pd_torque(data, indices)
             mujoco.mj_step(model, data)

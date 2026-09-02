@@ -289,7 +289,103 @@ python scripts/rsl_rl/train.py \
 
 
 
+python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-01_10-02-55/model_1999.pt \
+  --num_envs 16
 
 
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton_2.py
+
+
+
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2 \
+  --headless \
+  --num_envs 6000 \
+  --max_iterations 3000 \
+  --resume \
+  --load_run 2026-09-01_10-02-55 \
+  --checkpoint model_1999.pt
+
+  
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2 \
+  --headless \
+  --num_envs 6000 \
+  --max_iterations 2000 \
+  --run_name dynamics_tracking_w8
+
+
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-02_10-00-19_dynamics_tracking_w8/exported/policy.pt \
+  --vx 0.7 \
+  --output-dir /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-02_10-00-19_dynamics_tracking_w8/sim2sim_model_1999
+  
+
+# 用途：在 MuJoCo Sim2Sim 中完全关闭左右髋部外骨骼助力，以 0 Nm 作为
+# assist actuator 的输出，测试无助力时机器人在零速度指令下的表现。
+# 步态策略及后部滑块、圆柱机构的零位 PD 控制仍然启用。
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2.py \
+  --disable-assist \
+  --vx 0.0 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --output-dir /home/libai/08_amp/legged_lab/logs/sim2sim_analysis_exoskeleton_2_no_assist
+
+
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-02_10-00-19_dynamics_tracking_w8/exported/policy.pt \
+  --disable-assist \
+  --vx 0.7 \
+  --output-dir /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-02_10-00-19_dynamics_tracking_w8/sim2sim_model_1999
+  
+
+# 用途：在 MuJoCo Sim2Sim 中测试最终助力执行器输入系数。以下示例仅在
+# data.ctrl 最终写入时把助力扭矩乘以 0.5；策略推理、obs、扭矩历史记录和
+# 40 Nm/s 目标平滑过程均不变，最终执行器输出仍受正负 8 Nm 限幅约束。
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-02_10-00-19_dynamics_tracking_w8/exported/policy.pt \
+  --assist-torque-scale 3.0 \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --output-dir /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-02_10-00-19_dynamics_tracking_w8/sim2sim_torque_scale_1p0
+  
+
+# 用途：为当前 model_1999 生成 v2 Sim2Real 的 NumPy 权重和固定参数 C99
+# 源码，并依次验证 TorchScript→NumPy、NumPy→C 的数值一致性。
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+python sim2real/g1_assist_exoskeleton_v2/export_assist_policy_numpy.py
+
+conda run --no-capture-output -n env_isaaclab_2 \
+python sim2real/g1_assist_exoskeleton_v2/test_numpy_assist_policy.py
+
+conda run --no-capture-output -n env_isaaclab_2 \
+python sim2real/g1_assist_exoskeleton_v2/export_assist_policy_c.py
+
+conda run --no-capture-output -n env_isaaclab_2 \
+python sim2real/g1_assist_exoskeleton_v2/test_c_assist_policy.py
+
+
+# 用途：在 MuJoCo 中使用纯 NumPy v2 助力策略进行部署前验证；步态策略仍使用
+# TorchScript。最终电机输入系数设为 0.5，policy、obs、历史和平滑过程不缩放。
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+python sim2real/g1_assist_exoskeleton_v2/sim2sim_numpy_assist.py \
+  --assist-torque-scale 0.5 \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --output-dir /home/libai/08_amp/legged_lab/sim2real/g1_assist_exoskeleton_v2/output
 
 '''

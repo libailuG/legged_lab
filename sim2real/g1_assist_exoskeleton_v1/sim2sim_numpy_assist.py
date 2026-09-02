@@ -16,7 +16,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import numpy as np
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MUJOCO_SCRIPTS = PROJECT_ROOT / "scripts/mujoco"
 if str(MUJOCO_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(MUJOCO_SCRIPTS))

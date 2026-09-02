@@ -199,11 +199,13 @@ def create_plot():
         axes[2, col].set_title(f"{side.capitalize()} joint velocity")
         axes[2, col].set_ylabel("Velocity (deg/s)")
 
-        lines[f"{side}_hip_torque"], = axes[3, col].plot([], [], label="hip pitch")
-        lines[f"{side}_assist_torque"], = axes[3, col].plot([], [], color="tab:green", label="assist")
-        axes[3, col].set_title(f"{side.capitalize()} actuator torque")
+        lines[f"{side}_hip_torque"], = axes[3, col].plot([], [], label="hip pitch (max |tau|=0.00 N.m)")
+        lines[f"{side}_assist_torque"], = axes[3, col].plot(
+            [], [], color="tab:green", label="assist (max |tau|=0.00 N.m)"
+        )
+        axes[3, col].set_title(f"{side.capitalize()} normalized actuator torque")
         axes[3, col].set_xlabel("Time (s)")
-        axes[3, col].set_ylabel("Torque (N.m)")
+        axes[3, col].set_ylabel("Torque / max |Torque|")
 
     for ax in axes.flat:
         ax.grid(True, alpha=0.3)
@@ -219,16 +221,35 @@ def update_plot(axes, lines, plot_data, plot_window: float) -> None:
         return
     mask = times >= max(0.0, times[-1] - plot_window)
     time_view = times[mask]
-    for side in SIDES:
-        for signal in ("hip_pos", "assist_pos", "pos_error", "hip_vel", "assist_vel", "hip_torque", "assist_torque"):
+    for col, side in enumerate(SIDES):
+        for signal in ("hip_pos", "assist_pos", "pos_error", "hip_vel", "assist_vel"):
             key = f"{side}_{signal}"
             lines[key].set_data(time_view, np.asarray(plot_data[key])[mask])
+        hip_torque = np.asarray(plot_data[f"{side}_hip_torque"])[mask]
+        assist_torque = np.asarray(plot_data[f"{side}_assist_torque"])[mask]
+        hip_max = float(np.max(np.abs(hip_torque))) if hip_torque.size else 0.0
+        assist_max = float(np.max(np.abs(assist_torque))) if assist_torque.size else 0.0
+        lines[f"{side}_hip_torque"].set_data(
+            time_view, hip_torque / hip_max if hip_max > 0.0 else hip_torque
+        )
+        lines[f"{side}_assist_torque"].set_data(
+            time_view,
+            assist_torque / assist_max if assist_max > 0.0 else assist_torque,
+        )
+        lines[f"{side}_hip_torque"].set_label(
+            f"hip pitch (max |tau|={hip_max:.2f} N.m)"
+        )
+        lines[f"{side}_assist_torque"].set_label(
+            f"assist (max |tau|={assist_max:.2f} N.m)"
+        )
+        axes[3, col].legend(loc="upper right")
     for ax in axes.flat:
         ax.set_xlim(time_view[0], time_view[-1] + 0.02)
         ax.relim()
         ax.autoscale_view(scalex=False, scaley=True)
     for col in range(2):
         axes[1, col].set_ylim(-5.0, 5.0)
+        axes[3, col].set_ylim(-1.1, 1.1)
 
 
 def main() -> None:

@@ -11,7 +11,7 @@ import numpy as np
 from numpy_assist_policy import NumpyAssistPolicy
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TORCH_POLICY = (
     PROJECT_ROOT
     / "logs/rsl_rl/g1_assist_exoskeleton_v1_ppo/2026-08-18_13-27-09/exported/policy.pt"

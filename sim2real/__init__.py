@@ -1,2 +1,1 @@
-"""Minimal deployment utilities for the G1 assist exoskeleton policy."""
-
+"""Deployment packages for G1 exoskeleton policies."""

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
+
 import torch
 
 from isaaclab.assets import Articulation
 from isaaclab.envs import ManagerBasedRLEnv
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 
 
 def _motion_command_magnitude(
@@ -30,6 +33,27 @@ def assist_torque_rate_l2(
     return torch.square(normalized_rate).mean(dim=-1)
 
 
+def assist_requested_torque_rate_excess_l2(
+    env: ManagerBasedRLEnv,
+    action_name: str = "assist_torque",
+    torque_limit: float = 8.0,
+    torque_rate_limit: float = 40.0,
+) -> torch.Tensor:
+    """Penalize only the part of the requested torque step above the slew limit.
+
+    Unlike the post-limiter rate penalty, this remains informative when the
+    actuator command is saturated at the configured slew-rate limit.
+    """
+    if torque_limit <= 0.0 or torque_rate_limit <= 0.0:
+        raise ValueError("Torque and torque-rate limits must be greater than zero")
+    action = env.action_manager.get_term(action_name)
+    allowed_delta = torque_rate_limit * env.step_dt
+    excess = torch.clamp(action.requested_torque_delta.abs() - allowed_delta, min=0.0)
+    # Normalize by the per-control-step allowance.  Normalizing by the full
+    # torque range made large, rate-saturated requests look artificially small.
+    return torch.square(excess / allowed_delta).mean(dim=-1)
+
+
 def rear_mechanism_zero_position_error_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,
@@ -48,45 +72,97 @@ def rear_mechanism_zero_position_error_l2(
     return 0.5 * (slider_error + cylinder_error)
 
 
-def assist_torque_zero_at_hip_rest_l2(
+def hip_motor_torque_burden_l2(
     env: ManagerBasedRLEnv,
     hip_cfg: SceneEntityCfg,
-    action_name: str = "assist_torque",
-    torque_limit: float = 8.0,
-    velocity_threshold: float = 0.05,
-    acceleration_threshold: float = 0.5,
+    torque_scale: float = 40.0,
 ) -> torch.Tensor:
-    """Penalize non-zero assist torque when each paired physical hip is at rest."""
+    """Penalize the physical hip motors' normalized squared torque burden."""
+    if torque_scale <= 0.0:
+        raise ValueError("torque_scale must be greater than zero")
     robot: Articulation = env.scene[hip_cfg.name]
-    hip_vel = robot.data.joint_vel[:, hip_cfg.joint_ids]
-    hip_acc = robot.data.joint_acc[:, hip_cfg.joint_ids]
-    assist_torque = env.action_manager.get_term(action_name).processed_actions
-    at_rest = (hip_vel.abs() < velocity_threshold) & (
-        hip_acc.abs() < acceleration_threshold
-    )
-    normalized_torque_l2 = torch.square(assist_torque / torque_limit)
-    return (normalized_torque_l2 * at_rest.float()).mean(dim=-1)
+    hip_torque = robot.data.applied_torque[:, hip_cfg.joint_ids]
+    return torch.square(hip_torque / torque_scale).mean(dim=-1)
 
 
-def assist_torque_hip_dynamics_tracking_l2(
+def hip_motor_mechanical_power_l1(
     env: ManagerBasedRLEnv,
     hip_cfg: SceneEntityCfg,
-    action_name: str = "assist_torque",
-    torque_limit: float = 8.0,
-    velocity_gain: float = 0.5,
-    acceleration_gain: float = 0.2,
+    power_scale: float = 100.0,
 ) -> torch.Tensor:
-    """Penalize deviation from a velocity- and acceleration-based assist reference."""
+    """Penalize absolute physical hip-motor mechanical power."""
+    if power_scale <= 0.0:
+        raise ValueError("power_scale must be greater than zero")
     robot: Articulation = env.scene[hip_cfg.name]
+    hip_torque = robot.data.applied_torque[:, hip_cfg.joint_ids]
     hip_vel = robot.data.joint_vel[:, hip_cfg.joint_ids]
-    hip_acc = robot.data.joint_acc[:, hip_cfg.joint_ids]
-    assist_torque = env.action_manager.get_term(action_name).processed_actions
-    reference_torque = torch.clamp(
-        velocity_gain * hip_vel + acceleration_gain * hip_acc,
-        min=-torque_limit,
-        max=torque_limit,
-    )
-    return torch.square((assist_torque - reference_torque) / torque_limit).mean(dim=-1)
+    return torch.abs(hip_torque * hip_vel).mean(dim=-1) / power_scale
+
+
+class FilteredHipDynamicsReward(ManagerTermBase):
+    """Stateful assist tracking/rest reward with low-pass-filtered hip acceleration."""
+
+    def __init__(self, cfg, env):
+        super().__init__(cfg, env)
+        self._filtered_acceleration = torch.zeros(env.num_envs, 2, device=env.device)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        if env_ids is None:
+            env_ids = slice(None)
+        self._filtered_acceleration[env_ids] = 0.0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        mode: str,
+        hip_cfg: SceneEntityCfg,
+        action_name: str = "assist_torque",
+        torque_limit: float = 8.0,
+        velocity_gain: float = 0.5,
+        acceleration_gain: float = 0.2,
+        acceleration_filter_time_constant: float = 0.08,
+        rest_velocity_scale: float = 0.5,
+        rest_acceleration_scale: float = 3.0,
+    ) -> torch.Tensor:
+        if torque_limit <= 0.0:
+            raise ValueError("torque_limit must be greater than zero")
+        if acceleration_filter_time_constant <= 0.0:
+            raise ValueError("acceleration_filter_time_constant must be greater than zero")
+
+        robot: Articulation = env.scene[hip_cfg.name]
+        hip_vel = robot.data.joint_vel[:, hip_cfg.joint_ids]
+        hip_acc = robot.data.joint_acc[:, hip_cfg.joint_ids]
+        assist_torque = env.action_manager.get_term(action_name).processed_actions
+
+        filter_alpha = 1.0 - math.exp(
+            -env.step_dt / acceleration_filter_time_constant
+        )
+        self._filtered_acceleration.lerp_(hip_acc, filter_alpha)
+
+        if mode == "tracking":
+            reference_torque = torch.clamp(
+                velocity_gain * hip_vel
+                + acceleration_gain * self._filtered_acceleration,
+                min=-torque_limit,
+                max=torque_limit,
+            )
+            return torch.square(
+                (assist_torque - reference_torque) / torque_limit
+            ).mean(dim=-1)
+
+        if mode == "continuous_rest":
+            if rest_velocity_scale <= 0.0 or rest_acceleration_scale <= 0.0:
+                raise ValueError("rest motion scales must be greater than zero")
+            normalized_motion_l2 = torch.square(
+                hip_vel / rest_velocity_scale
+            ) + torch.square(
+                self._filtered_acceleration / rest_acceleration_scale
+            )
+            rest_weight = 1.0 / (1.0 + normalized_motion_l2)
+            normalized_torque_l2 = torch.square(assist_torque / torque_limit)
+            return (normalized_torque_l2 * rest_weight).mean(dim=-1)
+
+        raise ValueError(f"Unsupported filtered hip-dynamics reward mode: {mode}")
 
 
 def assist_torque_alignment(

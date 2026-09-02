@@ -8,6 +8,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import math
 import sys
 
 from isaaclab.app import AppLauncher
@@ -28,6 +29,18 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--policy_only_resume",
+    action="store_true",
+    default=False,
+    help="Resume model and normalizers without loading the old optimizer state.",
+)
+parser.add_argument(
+    "--resume_noise_std",
+    type=float,
+    default=0.2,
+    help="Exploration standard deviation set after --policy_only_resume.",
+)
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
@@ -39,6 +52,10 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+if args_cli.policy_only_resume and not args_cli.resume:
+    parser.error("--policy_only_resume requires --resume")
+if args_cli.resume_noise_std <= 0.0:
+    parser.error("--resume_noise_std must be greater than zero")
 
 # always enable cameras to record video
 if args_cli.video:
@@ -212,7 +229,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
-        runner.load(resume_path)
+        runner.load(resume_path, load_optimizer=not args_cli.policy_only_resume)
+        if args_cli.policy_only_resume:
+            policy = runner.alg.policy
+            with torch.no_grad():
+                if hasattr(policy, "std"):
+                    policy.std.fill_(args_cli.resume_noise_std)
+                elif hasattr(policy, "log_std"):
+                    policy.log_std.fill_(math.log(args_cli.resume_noise_std))
+                else:
+                    raise RuntimeError(
+                        "Policy-only resume could not find a state-independent noise parameter"
+                    )
+            if hasattr(runner.alg, "_clamp_policy_noise_std"):
+                runner.alg._clamp_policy_noise_std()
+            print(
+                "[INFO]: Policy-only resume: optimizer reset; "
+                f"exploration std={args_cli.resume_noise_std:g}"
+            )
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

@@ -34,6 +34,9 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument("--vx", type=float, default=None, help="Override the commanded forward velocity in m/s.")
+parser.add_argument("--vy", type=float, default=None, help="Override the commanded lateral velocity in m/s.")
+parser.add_argument("--yaw", type=float, default=None, help="Override the commanded yaw rate in rad/s.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -98,6 +101,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+
+    # Optionally replace the sampled planar velocity command with a fixed value.
+    if hasattr(env_cfg, "commands") and hasattr(env_cfg.commands, "base_velocity"):
+        command_ranges = env_cfg.commands.base_velocity.ranges
+        if args_cli.vx is not None:
+            command_ranges.lin_vel_x = (args_cli.vx, args_cli.vx)
+        if args_cli.vy is not None:
+            command_ranges.lin_vel_y = (args_cli.vy, args_cli.vy)
+        if args_cli.yaw is not None:
+            command_ranges.ang_vel_z = (args_cli.yaw, args_cli.yaw)
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)

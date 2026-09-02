@@ -96,6 +96,7 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
         self._raw_actions = torch.zeros(self.num_envs, 2, device=self.device)
         self._processed_actions = torch.zeros_like(self._raw_actions)
         self._previous_processed_actions = torch.zeros_like(self._raw_actions)
+        self._requested_torque_delta = torch.zeros_like(self._raw_actions)
         self._gait_actions = torch.zeros(
             self.num_envs, len(POLICY_JOINT_NAMES), device=self.device
         )
@@ -130,6 +131,11 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
         ) / self._env.step_dt
 
     @property
+    def requested_torque_delta(self) -> torch.Tensor:
+        """Requested torque change from the previously applied command in N.m."""
+        return self._requested_torque_delta
+
+    @property
     def gait_actions(self) -> torch.Tensor:
         """Frozen gait policy's latest 29 normalized position actions."""
         return self._gait_actions
@@ -138,6 +144,7 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
         self._raw_actions[:] = actions
         target_torque = torch.clamp(actions, -1.0, 1.0) * self.cfg.assist_torque_limit
         self._previous_processed_actions[:] = self._processed_actions
+        self._requested_torque_delta[:] = target_torque - self._processed_actions
         maximum_torque_delta = self.cfg.assist_torque_rate_limit * self._env.step_dt
         self._processed_actions.add_(
             torch.clamp(
@@ -196,6 +203,7 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
         self._raw_actions[env_ids] = 0.0
         self._processed_actions[env_ids] = 0.0
         self._previous_processed_actions[env_ids] = 0.0
+        self._requested_torque_delta[env_ids] = 0.0
         self._gait_actions[env_ids] = 0.0
         self._previous_gait_actions[env_ids] = 0.0
         self._gait_position_targets[env_ids] = self._asset.data.default_joint_pos[env_ids][

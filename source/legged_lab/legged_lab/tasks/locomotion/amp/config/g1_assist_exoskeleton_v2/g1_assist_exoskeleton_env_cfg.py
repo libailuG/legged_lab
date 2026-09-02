@@ -149,13 +149,22 @@ class AssistObservationsCfg:
 
 @configclass
 class AssistRewardsCfg:
-    """V2 assist rewards including standing and joint-mismatch behavior."""
+    """V2 rewards for smooth assistance that reduces physical hip burden."""
 
     assist_output_smoothness = RewTerm(
         func=mdp.assist_torque_rate_l2,
-        weight=-0.05,
+        weight=-0.2,
         params={
             "action_name": "assist_torque",
+            "torque_rate_limit": 40.0,
+        },
+    )
+    assist_requested_rate_excess = RewTerm(
+        func=mdp.assist_requested_torque_rate_excess_l2,
+        weight=-0.005,
+        params={
+            "action_name": "assist_torque",
+            "torque_limit": 8.0,
             "torque_rate_limit": 40.0,
         },
     )
@@ -189,27 +198,33 @@ class AssistRewardsCfg:
         },
     )
     assist_torque_zero_at_hip_rest = RewTerm(
-        func=mdp.assist_torque_zero_at_hip_rest_l2,
+        func=mdp.FilteredHipDynamicsReward,
         weight=-2.0,
         params={
+            "mode": "continuous_rest",
             "hip_cfg": HIP_PITCH_JOINT_CFG,
             "action_name": "assist_torque",
             "torque_limit": 8.0,
-            "velocity_threshold": 0.05,
-            "acceleration_threshold": 0.5,
+            "acceleration_filter_time_constant": 0.08,
+            "rest_velocity_scale": 0.5,
+            "rest_acceleration_scale": 3.0,
         },
     )
     assist_torque_hip_dynamics_tracking = RewTerm(
-        func=mdp.assist_torque_hip_dynamics_tracking_l2,
-        weight=-1.0,
+        func=mdp.FilteredHipDynamicsReward,
+        weight=-8.0,
         params={
+            "mode": "tracking",
             "hip_cfg": HIP_PITCH_JOINT_CFG,
             "action_name": "assist_torque",
             "torque_limit": 8.0,
-            "velocity_gain": 0.5,
-            "acceleration_gain": 0.2,
+            "velocity_gain": 1.0,
+            "acceleration_gain": 0.02,
+            "acceleration_filter_time_constant": 0.08,
         },
     )
+    hip_motor_torque_burden = None
+    hip_motor_mechanical_power = None
     termination_penalty = RewTerm(func=mdp.is_terminated, weight=-200.0)
 
 
@@ -270,7 +285,8 @@ class G1AssistExoskeletonV2EnvCfg(G1AssistAmpEnvCfg):
         self.sim.dt = 0.001
         self.decimation = 10
         self.episode_length_s = 20.0
-        self.commands.base_velocity.rel_standing_envs = 0.2
+        # More standing episodes teach zero assist from exoskeleton histories alone.
+        self.commands.base_velocity.rel_standing_envs = 0.35
         self.sim.render_interval = self.decimation
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
