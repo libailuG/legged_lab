@@ -1,0 +1,249 @@
+AI 协作修改记录
+================
+
+记录范围：2026-09-02 至 2026-09-03
+相关工程：
+- /home/libai/12_x1
+- /home/libai/08_amp/legged_lab
+
+
+2026-09-02
+----------
+
+01. 问题：备份 x1_template，并新建 x1_0902。
+处理：
+- 将 x1_template 复制为独立工程 x1_0902。
+- 后续固件修改均在 /home/libai/12_x1/x1_0902 中进行。
+
+02. 问题：x1_0902 中有哪些模式，并删除模式1和模式2，后续重新增加模式。
+处理：
+- 检查原有运行模式。
+- 删除旧模式1、模式2及其正在使用的旧模型文件。
+- 保留停止模式，为后续重新增加运动模式做准备。
+
+03. 问题：高速 FIFO 中有哪些量。
+处理：
+- 检查高速监视 FIFO 的数据结构和采样布局。
+- 最终 FIFO ABI 为 v2，共9个通道：
+  1) left_joint_angle_rad
+  2) left_joint_velocity_rad_s
+  3) left_applied_torque_nm
+  4) left_policy_action_torque_nm
+  5) right_joint_angle_rad
+  6) right_joint_velocity_rad_s
+  7) right_applied_torque_nm
+  8) time_s
+  9) state_flags
+
+04. 问题：增加右关节角度、角速度、输出扭矩。
+处理：
+- 将右关节角度、右关节角速度和右侧实际输出扭矩加入高速 FIFO。
+- 同步更新固件端 FIFO 描述和上位机监视端通道解析。
+
+05. 问题：monitor 报错“不支持 FIFO ABI v2”。
+处理：
+- 更新 /home/libai/12_x1/monitor_fifo.py，使监视程序兼容 FIFO ABI v1 和 v2。
+- monitor 相关测试共8项，全部通过。
+
+06. 问题：检查右边是否做过反向。
+处理：
+- 检查左右电机方向配置。
+- 当前配置中左侧速度符号为 -1，右侧输出扭矩符号为 -1：
+  APP_MOTOR_LEFT_SPEED_SIGN = -1.0
+  APP_MOTOR_RIGHT_TORQUE_SIGN = -1.0
+
+07. 问题：monitor.sh 除了监视以外是否可以改写值。
+结论：
+- 当前 monitor.sh 启动的是只读 Qt 监视程序。
+- 程序读取 ELF 符号、FIFO header 和 SRAM 采样数据，没有提供变量写入界面或写值命令。
+
+08. 问题：增加运动模式，双击进入；同步修改灯光；使用
+    /home/libai/08_amp/legged_lab/sim2real/g1_assist_exoskeleton_v2/c
+    中的网络实现。
+处理：
+- 增加 APP_MODE_MOTION 运动模式。
+- MODE 键双击进入运动模式，短按回到停止模式。
+- 运动模式下 +/- 键调整助力输出档位。
+- 停止模式显示红色档位灯，电源灯常亮。
+- 运动模式显示蓝色档位灯，电源灯以1 Hz闪烁。
+- 关节校零期间暂停控制器并输出零扭矩。
+- 原样复制并接入 g1_assist_v2_policy.c/.h，复制文件与原文件 SHA-256 一致。
+- 新增 assist_controller.c/.h，以100 Hz运行双侧策略。
+- 策略使用25帧关节角度、角速度和未缩放平滑扭矩历史。
+- 仅在左右电机反馈在线、更新时间不超过50 ms且数据有限时输出控制；异常时清空历史并输出零扭矩。
+
+09. 问题：为什么生成的固件是 x1_template.bin，而不是 x1_0902。
+处理：
+- 将 CMake project/target 名称改为 x1_0902。
+- 同步修改根目录 build.sh、flash.sh、monitor_config.yaml 和 README。
+- 构建产物更正为 x1_0902.bin、x1_0902.hex、x1_0902.elf、x1_0902.map。
+
+10. 问题：monitor 报错“FIFO 头部不完整”。
+排查：
+- 停机读取到的 FIFO header 完整且内容有效，开头数据为：
+  4d464946 001c0002 00090030 00000020 00002710 ...
+- 目标运行约100 ms后 DAP/SRAM 访问失败，目标状态变为 unknown。
+- 将调试速度降到100 kHz后仍会失败。
+结论：
+- 不是 FIFO 结构或 ABI 损坏，而是目标运行后的 DAP/复位线/调试连接访问问题。
+- 本次诊断未修改固件源码。
+
+11. 问题：将运动模式输出扭矩系数改为8档，从0.1到4.0。
+处理：
+- 档位改为：0.1、0.5、1.0、1.5、2.0、2.5、3.0、4.0。
+- 默认档位为0.1。
+- +/- 键切换档位，灯光显示1至8格。
+- 最终电机命令仍受策略和电机驱动的 +/-8 Nm 安全限幅。
+- 编译通过，生成：
+  /home/libai/12_x1/x1_0902/build-gcc/x1_0902.bin
+- 固件 SHA-256：
+  5c04019a165dff0dee17099dcdbdc2f8dd634a273aef2f36a0bb77d0115859e7
+- 未执行烧录。
+
+12. 问题：固件烧录占用多少内存。
+结果：
+- Flash：258576字节，约252.5 KiB，占1 MiB的24.66%。
+- RAM：25912字节，约25.3 KiB，占112 KiB的22.59%。
+- BIN 烧录起始地址：0x08000000。
+
+
+2026-09-03
+----------
+
+13. 问题：LeggedLab-Isaac-AMP-G1-v1 和 LeggedLab-Isaac-AMP-G1-v0 的模型是否有区别。
+结论：
+- 两者策略网络结构相同：Actor/Critic 隐藏层均为 512、256、128，AMP判别器为1024、512。
+- 奖励、观测、动作和运动数据配置相同。
+- v1 唯一主要区别是替换为 unitree_ros 中重新生成的 g1_29dof.usd。
+- v0 使用 LeggedLab 原有 g1_29dof_rev_1_0.usd。
+- v1 使用独立实验目录 g1_amp_v1。
+
+14. 问题：从 LeggedLab-Isaac-AMP-G1-v2 新建 LeggedLab-Isaac-AMP-G1-v3；最初要求使用 v1 USD，并修改为 PID 控制。
+初始处理：
+- 新增独立目录：
+  source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_v3
+- 新增训练任务 LeggedLab-Isaac-AMP-G1-v3。
+- 新增播放任务 LeggedLab-Isaac-AMP-G1-Play-v3。
+- 保留1 kHz显式PID和20 ms策略周期。
+- 初始 P、D、速度和扭矩限幅与普通 G1-v1 数值一致。
+- I 参数采用 Ki = 0.1 * Kp，积分时间常数约10秒。
+- 积分项直接按扭矩限制在 +/-10 Nm，并实现饱和抗积分累积。
+- 新增文件：
+  __init__.py
+  agents/__init__.py
+  agents/rsl_rl_ppo_cfg.py
+  g1_amp_env_cfg.py
+  pid_actuator.py
+  robot_cfg.py
+
+15. 问题：如何修复 Isaac Sim 的“No space left on device”。
+排查：
+- 磁盘仍有约344 GB可用，inode使用率约5%，不是磁盘容量问题。
+- inotify instances 为126/128。
+- inotify watches 为65653/65536。
+- 两个 VS Code 进程合计占用约61450个 watches。
+修复：
+- 将永久配置写入 /etc/sysctl.d/99-inotify.conf：
+  fs.inotify.max_user_watches=524288
+  fs.inotify.max_user_instances=1024
+  fs.inotify.max_queued_events=32768
+- 用户输入 sudo 密码并应用配置后，复核结果为：
+  instances 126/1024
+  watches 约65654/524288
+- Isaac Sim 后续启动不再出现“No space left on device”。
+
+16. 问题：当前外骨骼训练使用哪个机器人 USD。
+结论：
+- LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2 和 v2-v1 均使用：
+  /home/libai/08_amp/legged_lab/source/legged_lab/legged_lab/data/Robots/Unitree/
+  g1_29dof_assist/usd/g1_29dof_assist_exoskeleton_v2/
+  g1_29dof_assist_exoskeleton_v2.usd
+- 查询时没有正在运行的训练进程。
+
+17. 问题：外骨骼训练中，机器人本体使用哪个训练网络模型。
+结论：
+- 冻结的本体行走策略来自 LeggedLab-Isaac-AMP-G1-assist-v0。
+- 原 checkpoint：
+  logs/rsl_rl/g1_assist_amp/2026-08-13_13-45-16/model_29400.pt
+- 训练时实际加载的 TorchScript：
+  logs/rsl_rl/g1_assist_amp/2026-08-13_13-45-16/exported/policy.pt
+- 网络输入96维，输出29个本体关节动作，Actor隐藏层为512、256、128。
+- 外骨骼训练期间该本体网络被冻结，不参与更新。
+
+18. 问题：修改 G1-v3，使用外骨骼 v2 USD；外骨骼关节 Kp/Kd 为0；机器人关节参数使用 G1-assist-v0。
+处理：
+- G1-v3 的 USD 改为：
+  /home/libai/08_amp/legged_lab/source/legged_lab/legged_lab/data/Robots/Unitree/
+  g1_29dof_assist/usd/g1_29dof_assist_exoskeleton_v2/
+  g1_29dof_assist_exoskeleton_v2.usd
+- 机器人本体29关节的 Kp、Kd、扭矩限幅、速度限幅和 armature 对齐 G1-assist-v0。
+- 本体显式PID继续采用 Ki = 0.1 * Kp，积分扭矩限幅 +/-10 Nm。
+- 左右 hip_pitch_assist_joint 设置 Kp=0、Kd=0、Ki=0。
+- 初始时后部 box/cylinder 机构也设置 Kp=0、Kd=0、Ki=0。
+- 将策略动作、policy/critic/discriminator观测、奖励和随机化明确限制为29个机器人本体关节，避免4个外骨骼关节改变AMP维度。
+- 新增 g1_v3/events.py，使参考动作重置只写入29个本体关节；额外4个关节使用独立初始状态。
+
+19. 验证 G1-v3 外骨骼 USD 配置。
+结果：
+- 使用1个环境、max_iterations=0完成 Isaac Sim 实际初始化。
+- 物理周期：0.001 s。
+- 环境/策略周期：0.02 s。
+- Action：29维。
+- Policy observation：96维。
+- Discriminator 和 demonstration observation：均为 (4, 70)。
+- Actor输出：29维。
+- 33个总关节均完成执行器覆盖，无执行器重叠或关节漏配错误。
+- USD 中 imu_in_pelvis、imu_in_torso、d435_link、mid360_link 存在空 visual reference 警告，但未阻止初始化和训练器创建。
+- 验证生成的零迭代日志已移入回收站。
+
+20. 问题：当前配置是否能达到训练机器人本体的目的。
+结论：
+- 结构上能够训练29关节机器人本体，但实际目标是“机器人穿戴无动力外骨骼行走”，不是裸机G1。
+- 发现后部 box/cylinder 机构完全零PD会自由摆动，可能增加训练难度、产生碰撞或形成不真实策略。
+- 建议左右髋助力关节保持零增益，而后部机构使用适当PD约束。
+
+21. 问题：将后部 box/cylinder 两个机构关节改为 P=10、D=1。
+处理：
+- pelvis_rear_upper_box_assist_joint：Kp=10，Kd=1，Ki=0。
+- pelvis_rear_cylinder_assist_joint：Kp=10，Kd=1，Ki=0。
+- 左右髋助力关节继续保持 Kp=0、Kd=0、Ki=0。
+- 原有扭矩和速度限幅保持不变。
+- Python语法检查通过。
+
+22. 问题：按时间顺序整理提问与修改记录，保存为 legged_lab/al_log.txt。
+处理：
+- 汇总2026-09-02至2026-09-03的用户问题、实际修改、诊断结论和验证结果。
+- 创建本文件：/home/libai/08_amp/legged_lab/al_log.txt。
+
+
+当前 G1-v3 关键文件
+--------------------
+
+- 任务注册：
+  source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_v3/__init__.py
+- 环境、29关节隔离及控制周期：
+  source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_v3/g1_amp_env_cfg.py
+- 本体与外骨骼执行器参数：
+  source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_v3/robot_cfg.py
+- 显式PID、积分扭矩限幅及抗饱和：
+  source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_v3/pid_actuator.py
+- 29关节参考动作重置：
+  source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_v3/events.py
+- 训练配置：
+  source/legged_lab/legged_lab/tasks/locomotion/amp/config/g1_v3/agents/rsl_rl_ppo_cfg.py
+
+
+当前 G1-v3 训练命令
+-------------------
+
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-v3 \
+  --num_envs 6000 \
+  --headless \
+  --max_iterations 50000
+
+训练日志目录：
+/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_amp_v3/

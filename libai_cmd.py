@@ -382,10 +382,40 @@ cd /home/libai/08_amp/legged_lab
 
 conda run --no-capture-output -n env_isaaclab_2 \
 python sim2real/g1_assist_exoskeleton_v2/sim2sim_numpy_assist.py \
-  --assist-torque-scale 0.5 \
+  --assist-torque-scale 1.0 \
   --vx 0.7 \
   --vy 0.0 \
   --yaw 0.0 \
   --output-dir /home/libai/08_amp/legged_lab/sim2real/g1_assist_exoskeleton_v2/output
+
+  
+
+拷贝任务LeggedLab-Isaac-AMP-G1-v0帮我新建任务LeggedLab-Isaac-AMP-G1-v2，不要修改其他文件，有相关的就拷贝一份
+1.0 改动原先的PD控制，改为PID控制，增加I, I参数自己分析确认
+2.0 原20ms外环控制周期继续使用，但物理仿真/PD 内环周期改为1ms
+3.0 就改动这个，我想训练一个PID的，看看有什么不同。
+
+
+
+
+拷贝任务LeggedLab-Isaac-AMP-G1-v2帮我新建任务LeggedLab-Isaac-AMP-G1-v3，不要修改其他文件，有相关的就拷贝一份
+1.0 改动模型，使用任务LeggedLab-Isaac-AMP-G1-v1的usd
+2.0 改动PID的参数。仿照任务LeggedLab-Isaac-AMP-G1-v1中的PD和扭矩限幅等，I参数自己分析确认，积分限幅10nm
+
+
+
+修改任务LeggedLab-Isaac-AMP-G1-v3的usd,使用/home/libai/08_amp/legged_lab/source/legged_lab/legged_lab/data/Robots/Unitree/g1_29dof_assist/usd/g1_29dof_assist_exoskeleton_v2/g1_29dof_assist_exoskeleton_v2.usd，外骨骼相关的关节设置kp=0.0 kd = 0.0 。机器人相关的kp,kd,等相关关节参数 使用任务LeggedLab-Isaac-AMP-G1-assist-v0中的KP,kd和相关参数
+
+
+
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-v3 \
+  --num_envs 6000 \
+  --headless \
+  --max_iterations 50000
+
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-v3 \
+  --num_envs 1
 
 '''
