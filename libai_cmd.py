@@ -545,4 +545,67 @@ python scripts/mujoco/sim2sim_g1_pid_v3.py \
   --vx 0.5 --vy 0 --yaw 0 \
   --policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_amp_v3/2026-09-03_13-48-47_pid_curriculum_30000/exported/policy.pt
 
+  
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-Play-v0 \
+  --num_envs 16 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_amp/2026-08-13_13-45-16/model_29400.pt
+  
+
+  
+  cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-Play-v1 \
+  --num_envs 16 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_amp/2026-08-13_13-45-16/model_29400.pt
+
+
+
+|                                                                                            Available Environments in Isaac Lab LeggedLab Extension                                                                                             |
++--------+------------------------------------------------------+------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------+
+| S. No. | Task Name                                            | Entry Point                              | Config                                                                                                                              |
++--------+------------------------------------------------------+------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------+
+|   1    | LeggedLab-Isaac-AMP-Flat-Atom01-v0                   | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.atom01.amp_flat_env_cfg:Atom01AmpFlatEnvCfg                                                  |
+|   2    | LeggedLab-Isaac-AMP-Flat-Atom01-Play-v0              | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.atom01.amp_flat_env_cfg:Atom01AmpFlatEnvCfg_PLAY                                             |
+|   3    | LeggedLab-Isaac-AMP-G1-v0                            | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1.g1_amp_env_cfg:G1AmpEnvCfg                                                                |
+|   4    | LeggedLab-Isaac-AMP-G1-v1                            | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1.g1_amp_env_cfg:G1AmpEnvCfgV1                                                              |
+|   5    | LeggedLab-Isaac-AMP-G1-Play-v0                       | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1.g1_amp_env_cfg:G1AmpEnvCfg_PLAY                                                           |
+|   6    | LeggedLab-Isaac-AMP-G1-Play-v1                       | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1.g1_amp_env_cfg:G1AmpEnvCfg_PLAY_V1                                                        |
+|   7    | LeggedLab-Isaac-AMP-G1-assist-v0                     | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1_assist.g1_assist_amp_env_cfg:G1AssistAmpEnvCfg                                            |
+|   8    | LeggedLab-Isaac-AMP-G1-assist-Play-v0                | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1_assist.g1_assist_amp_env_cfg:G1AssistAmpEnvCfg_PLAY                                       |
+|   9    | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v0         | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonEnvCfg                |
+|   10   | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v0    | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonEnvCfg_PLAY           |
+|   11   | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v1         | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton_v1.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonV1EnvCfg           |
+|   12   | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v1    | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton_v1.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonV1EnvCfg_PLAY      |
+|   13   | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2         | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton_v2.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonV2EnvCfg           |
+|   14   | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2    | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton_v2.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonV2EnvCfg_PLAY      |
+|   15   | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v1      | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton_v2_v1.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonV2V1EnvCfg      |
+|   16   | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2-v1 | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton_v2_v1.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonV2V1EnvCfg_PLAY |
+|   17   | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v2      | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton_v2_v2.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonV2V2EnvCfg      |
+|   18   | LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2-v2 | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.amp.config.g1_assist_exoskeleton_v2_v2.g1_assist_exoskeleton_env_cfg:G1AssistExoskeletonV2V2EnvCfg_PLAY |
+|   19   | LeggedLab-Isaac-AMP-G1-assist-v1                     | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1_assist_v1.g1_assist_amp_env_cfg:G1AssistV1AmpEnvCfg                                       |
+|   20   | LeggedLab-Isaac-AMP-G1-assist-Play-v1                | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1_assist_v1.g1_assist_amp_env_cfg:G1AssistV1AmpEnvCfg_PLAY                                  |
+|   21   | LeggedLab-Isaac-AMP-G1-v2                            | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1_v2.g1_amp_env_cfg:G1AmpEnvCfgV2                                                           |
+|   22   | LeggedLab-Isaac-AMP-G1-Play-v2                       | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1_v2.g1_amp_env_cfg:G1AmpEnvCfg_PLAY_V2                                                     |
+|   23   | LeggedLab-Isaac-AMP-G1-v3                            | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1_v3.g1_amp_env_cfg:G1AmpEnvCfgV3                                                           |
+|   24   | LeggedLab-Isaac-AMP-G1-Play-v3                       | legged_lab.envs:ManagerBasedAmpEnv       | legged_lab.tasks.locomotion.amp.config.g1_v3.g1_amp_env_cfg:G1AmpEnvCfg_PLAY_V3                                                     |
+|   25   | LeggedLab-Isaac--Deepmimic-G1-v0                     | legged_lab.envs:ManagerBasedAnimationEnv | legged_lab.tasks.locomotion.deepmimic.config.g1.g1_deepmimic_env_cfg:G1DeepMimicEnvCfg                                              |
+|   26   | LeggedLab-Isaac--Deepmimic-G1-Play-v0                | legged_lab.envs:ManagerBasedAnimationEnv | legged_lab.tasks.locomotion.deepmimic.config.g1.g1_deepmimic_env_cfg:G1DeepMimicEnvCfg_PLAY                                         |
+|   27   | LeggedLab-Isaac--Deepmimic-G1-Debug-v0               | legged_lab.envs:ManagerBasedAnimationEnv | legged_lab.tasks.locomotion.deepmimic.config.g1.g1_deepmimic_env_cfg:G1DeepMimicEnvCfg_DEBUG                                        |
+|   28   | LeggedLab-Isaac-Velocity-Flat-Unitree-Go2-v0         | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.velocity.config.go2.flat_env_cfg:Go2FlatEnvCfg                                                          |
+|   29   | LeggedLab-Isaac-Velocity-Flat-Unitree-Go2-Play-v0    | isaaclab.envs:ManagerBasedRLEnv          | legged_lab.tasks.locomotion.velocity.config.go2.flat_env_cfg:Go2FlatEnvCfg_PLAY                                                     |
+
+
+
+
+
+
+
+
+
 '''
