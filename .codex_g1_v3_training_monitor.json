@@ -1,0 +1,16 @@
+{
+  "task": "LeggedLab-Isaac-AMP-G1-v3",
+  "target_iteration": 30000,
+  "report_interval": 100,
+  "next_report_iteration": 7300,
+  "num_envs": 16384,
+  "num_mini_batches": 8,
+  "remote_console_log": "/root/autodl-tmp/g1_v3_pid_30000/console.log",
+  "remote_pid_file": "/root/autodl-tmp/g1_v3_pid_30000/train.pid",
+  "remote_run_dir": "/root/legged_lab/logs/rsl_rl/g1_amp_v3/2026-09-03_13-48-47_pid_curriculum_30000",
+  "remote_pid": 12168,
+  "last_reported_iteration": 7200,
+  "last_observed_iteration": 7230,
+  "last_observed_time": "2026-09-04T16:48:00+08:00",
+  "status": "running"
+}

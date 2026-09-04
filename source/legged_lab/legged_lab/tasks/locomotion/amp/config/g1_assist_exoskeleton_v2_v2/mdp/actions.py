@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Sequence
 
@@ -51,16 +52,16 @@ EXTRA_POSITION_JOINT_NAMES = [
 ]
 
 
-def command_speed_gate(
-    forward_command: torch.Tensor,
+def joint_motion_gate(
+    joint_speed: torch.Tensor,
     deadzone: float,
-    full_speed: float,
+    full_motion_speed: float,
 ) -> torch.Tensor:
-    """Return a smooth 0-to-1 gate from absolute commanded forward speed."""
-    if deadzone < 0.0 or full_speed <= deadzone:
-        raise ValueError("Command gate requires 0 <= deadzone < full_speed")
+    """Return a smooth per-joint gate from measured exoskeleton angular speed."""
+    if deadzone < 0.0 or full_motion_speed <= deadzone:
+        raise ValueError("Motion gate requires 0 <= deadzone < full_motion_speed")
     phase = torch.clamp(
-        (forward_command.abs() - deadzone) / (full_speed - deadzone),
+        (joint_speed.abs() - deadzone) / (full_motion_speed - deadzone),
         min=0.0,
         max=1.0,
     )
@@ -78,10 +79,14 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
 
         if not os.path.isfile(cfg.frozen_policy_path):
             raise FileNotFoundError(f"Frozen gait policy was not found: {cfg.frozen_policy_path}")
-        if cfg.assist_torque_rate_limit <= 0.0:
-            raise ValueError("assist_torque_rate_limit must be greater than zero")
-        if cfg.command_speed_deadzone < 0.0 or cfg.command_speed_full <= cfg.command_speed_deadzone:
-            raise ValueError("Command gate requires 0 <= deadzone < full_speed")
+        if cfg.lift_torque_rate_limit <= 0.0 or cfg.press_torque_rate_limit <= 0.0:
+            raise ValueError("lift_torque_rate_limit and press_torque_rate_limit must be greater than zero")
+        if cfg.lift_torque_limit <= 0.0 or cfg.press_torque_limit <= 0.0:
+            raise ValueError("lift_torque_limit and press_torque_limit must be greater than zero")
+        if cfg.motion_speed_deadzone < 0.0 or cfg.motion_speed_full <= cfg.motion_speed_deadzone:
+            raise ValueError("Motion gate requires 0 <= deadzone < full_motion_speed")
+        if cfg.motion_filter_time_constant <= 0.0:
+            raise ValueError("motion_filter_time_constant must be greater than zero")
 
         self._policy_joint_ids, resolved_policy_names = self._asset.find_joints(
             cfg.policy_joint_names, preserve_order=True
@@ -115,7 +120,8 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
         self._processed_actions = torch.zeros_like(self._raw_actions)
         self._previous_processed_actions = torch.zeros_like(self._raw_actions)
         self._requested_torque_delta = torch.zeros_like(self._raw_actions)
-        self._command_speed_gate = torch.zeros(self.num_envs, device=self.device)
+        self._filtered_assist_joint_velocity = torch.zeros_like(self._raw_actions)
+        self._motion_gate = torch.zeros_like(self._raw_actions)
         self._gait_actions = torch.zeros(
             self.num_envs, len(POLICY_JOINT_NAMES), device=self.device
         )
@@ -155,9 +161,9 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
         return self._requested_torque_delta
 
     @property
-    def command_speed_gate(self) -> torch.Tensor:
-        """Smooth assist gate derived from the absolute commanded forward speed."""
-        return self._command_speed_gate
+    def motion_gate(self) -> torch.Tensor:
+        """Per-leg assist gate derived only from measured exoskeleton motion."""
+        return self._motion_gate
 
     @property
     def gait_actions(self) -> torch.Tensor:
@@ -166,23 +172,36 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
 
     def process_actions(self, actions: torch.Tensor):
         self._raw_actions[:] = actions
-        command = self._env.command_manager.get_command(self.cfg.command_name)
-        self._command_speed_gate[:] = command_speed_gate(
-            command[:, 0],
-            self.cfg.command_speed_deadzone,
-            self.cfg.command_speed_full,
+        filter_alpha = 1.0 - math.exp(
+            -self._env.step_dt / self.cfg.motion_filter_time_constant
         )
-        target_torque = (
-            torch.clamp(actions, -1.0, 1.0)
-            * self.cfg.assist_torque_limit
-            * self._command_speed_gate.unsqueeze(-1)
+        self._filtered_assist_joint_velocity.lerp_(
+            self._asset.data.joint_vel[:, self._assist_joint_ids], filter_alpha
         )
+        self._motion_gate[:] = joint_motion_gate(
+            self._filtered_assist_joint_velocity,
+            self.cfg.motion_speed_deadzone,
+            self.cfg.motion_speed_full,
+        )
+        clipped_actions = torch.clamp(actions, -1.0, 1.0)
+        # Both hip-pitch axes use negative torque for forward lift/flexion.
+        directional_limit = torch.where(
+            clipped_actions < 0.0,
+            self.cfg.lift_torque_limit,
+            self.cfg.press_torque_limit,
+        )
+        target_torque = clipped_actions * directional_limit * self._motion_gate
         self._previous_processed_actions[:] = self._processed_actions
-        self._requested_torque_delta[:] = target_torque - self._processed_actions
-        maximum_torque_delta = self.cfg.assist_torque_rate_limit * self._env.step_dt
+        requested_delta = target_torque - self._processed_actions
+        self._requested_torque_delta[:] = requested_delta
+        maximum_torque_delta = torch.where(
+            requested_delta < 0.0,
+            self.cfg.lift_torque_rate_limit,
+            self.cfg.press_torque_rate_limit,
+        ) * self._env.step_dt
         self._processed_actions.add_(
             torch.clamp(
-                target_torque - self._processed_actions,
+                requested_delta,
                 min=-maximum_torque_delta,
                 max=maximum_torque_delta,
             )
@@ -238,7 +257,8 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
         self._processed_actions[env_ids] = 0.0
         self._previous_processed_actions[env_ids] = 0.0
         self._requested_torque_delta[env_ids] = 0.0
-        self._command_speed_gate[env_ids] = 0.0
+        self._filtered_assist_joint_velocity[env_ids] = 0.0
+        self._motion_gate[env_ids] = 0.0
         self._gait_actions[env_ids] = 0.0
         self._previous_gait_actions[env_ids] = 0.0
         self._gait_position_targets[env_ids] = self._asset.data.default_joint_pos[env_ids][
@@ -259,7 +279,10 @@ class FrozenGaitAssistTorqueActionCfg(ActionTermCfg):
     extra_position_joint_names: list[str] = EXTRA_POSITION_JOINT_NAMES
     command_name: str = "base_velocity"
     gait_action_scale: float = 0.25
-    assist_torque_limit: float = 8.0
-    assist_torque_rate_limit: float = 80.0
-    command_speed_deadzone: float = 0.2
-    command_speed_full: float = 0.7
+    lift_torque_limit: float = 10.0
+    press_torque_limit: float = 4.0
+    lift_torque_rate_limit: float = 80.0
+    press_torque_rate_limit: float = 40.0
+    motion_speed_deadzone: float = 0.15
+    motion_speed_full: float = 0.8
+    motion_filter_time_constant: float = 0.05

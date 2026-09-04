@@ -15,7 +15,16 @@ G1_29DOF_ASSIST_EXOSKELETON_V2_USD_PATH = (
     "g1_29dof_assist_exoskeleton_v2/g1_29dof_assist_exoskeleton_v2.usd"
 )
 INTEGRAL_EFFORT_LIMIT_NM = 10.0
+INTEGRAL_CURRICULUM_START_ITERATION = 5000
+INTEGRAL_CURRICULUM_END_ITERATION = 10000
 G1_BODY_JOINT_NAMES = list(UNITREE_G1_29DOF_ASSIST_CFG.joint_sdk_names)
+
+
+def _pid_curriculum_kwargs() -> dict[str, int]:
+    return {
+        "integral_curriculum_start_iteration": INTEGRAL_CURRICULUM_START_ITERATION,
+        "integral_curriculum_end_iteration": INTEGRAL_CURRICULUM_END_ITERATION,
+    }
 
 
 UNITREE_G1_29DOF_PID_V3_CFG = deepcopy(UNITREE_G1_29DOF_ASSIST_CFG)
@@ -40,6 +49,7 @@ UNITREE_G1_29DOF_PID_V3_CFG.actuators = {
         integral_effort_limit=INTEGRAL_EFFORT_LIMIT_NM,
         integration_dt=0.001,
         armature=0.01,
+        **_pid_curriculum_kwargs(),
     ),
     "assist_hip_roll_knee": IdealPIDActuatorCfg(
         joint_names_expr=[".*_hip_roll_.*", ".*_knee_.*"],
@@ -53,6 +63,7 @@ UNITREE_G1_29DOF_PID_V3_CFG.actuators = {
         integral_effort_limit=INTEGRAL_EFFORT_LIMIT_NM,
         integration_dt=0.001,
         armature=0.01,
+        **_pid_curriculum_kwargs(),
     ),
     "assist_ankle_waist": IdealPIDActuatorCfg(
         joint_names_expr=[".*_ankle_.*", "waist_roll_joint", "waist_pitch_joint"],
@@ -66,6 +77,7 @@ UNITREE_G1_29DOF_PID_V3_CFG.actuators = {
         integral_effort_limit=INTEGRAL_EFFORT_LIMIT_NM,
         integration_dt=0.001,
         armature=0.01,
+        **_pid_curriculum_kwargs(),
     ),
     "assist_shoulder_elbow_wrist_roll": IdealPIDActuatorCfg(
         joint_names_expr=[".*_shoulder_.*", ".*_elbow_.*", ".*_wrist_roll.*"],
@@ -79,6 +91,7 @@ UNITREE_G1_29DOF_PID_V3_CFG.actuators = {
         integral_effort_limit=INTEGRAL_EFFORT_LIMIT_NM,
         integration_dt=0.001,
         armature=0.01,
+        **_pid_curriculum_kwargs(),
     ),
     "assist_wrist_pitch_yaw": IdealPIDActuatorCfg(
         joint_names_expr=[".*_wrist_pitch.*", ".*_wrist_yaw.*"],
@@ -92,6 +105,7 @@ UNITREE_G1_29DOF_PID_V3_CFG.actuators = {
         integral_effort_limit=INTEGRAL_EFFORT_LIMIT_NM,
         integration_dt=0.001,
         armature=0.01,
+        **_pid_curriculum_kwargs(),
     ),
     "exoskeleton_free": IdealPIDActuatorCfg(
         joint_names_expr=[

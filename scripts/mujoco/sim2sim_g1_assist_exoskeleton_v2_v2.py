@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the frozen gait policy and optional trained v2 assist policy in MuJoCo.
+"""Run the frozen gait policy and asymmetric v2-v2 assist policy in MuJoCo.
 
 The two additional mechanism joints are held at zero by per-physics-step PD
 controllers, independently of the learned gait and hip-assist policies.
@@ -32,7 +32,6 @@ from sim2sim_g1_29dof_assist import (
     require_file,
 )
 from sim2sim_g1_assist_exoskeleton import (
-    ASSIST_ACTION_SCALE,
     SIM_DT,
     SIDES,
     build_indices as build_base_indices,
@@ -53,7 +52,7 @@ DEFAULT_GAIT_POLICY = (
 )
 DEFAULT_ASSIST_POLICY = (
     PROJECT_ROOT
-    / "logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-01_10-02-55/exported/policy.pt"
+    / "logs/rsl_rl/g1_assist_exoskeleton_v2_v2_ppo/latest/exported/policy.pt"
 )
 
 DECIMATION = 10
@@ -62,9 +61,13 @@ ASSIST_OBSERVATIONS = 3 * 2 * ASSIST_HISTORY_LENGTH
 ASSIST_POSITION_NOISE = np.deg2rad(0.5)
 ASSIST_VELOCITY_NOISE = 0.5
 ASSIST_TORQUE_NOISE = 0.2
-ASSIST_TORQUE_RATE_LIMIT = 80.0
-ASSIST_COMMAND_SPEED_DEADZONE = 0.2
-ASSIST_COMMAND_SPEED_FULL = 0.7
+ASSIST_LIFT_TORQUE_RATE_LIMIT = 80.0
+ASSIST_PRESS_TORQUE_RATE_LIMIT = 40.0
+ASSIST_MOTION_SPEED_DEADZONE = 0.15
+ASSIST_MOTION_SPEED_FULL = 0.8
+ASSIST_MOTION_FILTER_TIME_CONSTANT = 0.05
+ASSIST_LIFT_TORQUE_LIMIT = 10.0
+ASSIST_PRESS_TORQUE_LIMIT = 4.0
 
 EXTRA_JOINT_NAMES = (
     "pelvis_rear_upper_box_assist_joint",
@@ -76,15 +79,15 @@ EXTRA_KD = np.array((20.0, 2.0), dtype=np.float64)
 EXTRA_EFFORT_LIMIT = np.array((300.0, 200.0), dtype=np.float64)
 
 
-def command_speed_gate(forward_command: float) -> float:
-    """Return the training-matched smooth assist gate for commanded forward speed."""
+def joint_motion_gate(filtered_joint_velocity: np.ndarray) -> np.ndarray:
+    """Return the training-matched gate from measured exoskeleton joint speed."""
     phase = np.clip(
-        (abs(forward_command) - ASSIST_COMMAND_SPEED_DEADZONE)
-        / (ASSIST_COMMAND_SPEED_FULL - ASSIST_COMMAND_SPEED_DEADZONE),
+        (np.abs(filtered_joint_velocity) - ASSIST_MOTION_SPEED_DEADZONE)
+        / (ASSIST_MOTION_SPEED_FULL - ASSIST_MOTION_SPEED_DEADZONE),
         0.0,
         1.0,
     )
-    return float(phase * phase * (3.0 - 2.0 * phase))
+    return phase * phase * (3.0 - 2.0 * phase)
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,8 +116,9 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Final multiplier applied only when writing the assist actuator command "
             "(default: 1.0). Policy inference, observations, torque history, and the "
-            f"{ASSIST_TORQUE_RATE_LIMIT:g} Nm/s target slew limiter is unchanged; "
-            f"final output is +/-{ASSIST_ACTION_SCALE:g} Nm."
+            f"-{ASSIST_LIFT_TORQUE_RATE_LIMIT:g}/+{ASSIST_PRESS_TORQUE_RATE_LIMIT:g} "
+            "Nm/s directional slew limiters are unchanged; "
+            f"final output is -{ASSIST_LIFT_TORQUE_LIMIT:g}/+{ASSIST_PRESS_TORQUE_LIMIT:g} Nm."
         ),
     )
     parser.add_argument("--vx", type=float, default=0.7, help="Initial forward command in m/s.")
@@ -363,6 +367,7 @@ def main() -> None:
     last_gait_action = np.zeros(NUM_ACTIONS, dtype=np.float64)
     gait_target = DEFAULT_JOINT_POS.copy()
     assist_torque = np.zeros(2, dtype=np.float64)
+    filtered_assist_joint_velocity = np.zeros(2, dtype=np.float64)
     reset_requested = False
 
     output_dir = (
@@ -459,11 +464,19 @@ def main() -> None:
         f"Control:       dt={SIM_DT}, decimation={DECIMATION}, "
         f"policy rate={1.0 / (SIM_DT * DECIMATION):g} Hz"
     )
-    print(f"Torque slew:   {ASSIST_TORQUE_RATE_LIMIT:g} Nm/s")
     print(
-        "Assist gate:   "
-        f"0 below |vx|={ASSIST_COMMAND_SPEED_DEADZONE:g} m/s, "
-        f"1 at |vx|={ASSIST_COMMAND_SPEED_FULL:g} m/s"
+        f"Torque slew:   -direction {ASSIST_LIFT_TORQUE_RATE_LIMIT:g} Nm/s / "
+        f"+direction {ASSIST_PRESS_TORQUE_RATE_LIMIT:g} Nm/s"
+    )
+    print(
+        f"Torque range:  -{ASSIST_LIFT_TORQUE_LIMIT:g} Nm lift / "
+        f"+{ASSIST_PRESS_TORQUE_LIMIT:g} Nm press"
+    )
+    print(
+        "Motion gate:   "
+        f"0 below |joint vel|={ASSIST_MOTION_SPEED_DEADZONE:g} rad/s, "
+        f"1 at {ASSIST_MOTION_SPEED_FULL:g} rad/s, "
+        f"filter tau={ASSIST_MOTION_FILTER_TIME_CONSTANT:g}s"
     )
     print(f"Gait effort:   Isaac limits applied to {EFFORT_LIMIT.size} joints")
     print(
@@ -505,6 +518,7 @@ def main() -> None:
                     last_gait_action.fill(0.0)
                     gait_target[:] = DEFAULT_JOINT_POS
                     assist_torque.fill(0.0)
+                    filtered_assist_joint_velocity.fill(0.0)
                     reset_requested = False
                     control_step = 0
                     resets += 1
@@ -542,14 +556,31 @@ def main() -> None:
                         assist_action = np.clip(
                             assist_action_tensor.squeeze(0).numpy(), -1.0, 1.0
                         )
+                    directional_limit = np.where(
+                        assist_action < 0.0,
+                        ASSIST_LIFT_TORQUE_LIMIT,
+                        ASSIST_PRESS_TORQUE_LIMIT,
+                    )
+                    motion_filter_alpha = 1.0 - math.exp(
+                        -(SIM_DT * DECIMATION) / ASSIST_MOTION_FILTER_TIME_CONSTANT
+                    )
+                    filtered_assist_joint_velocity += motion_filter_alpha * (
+                        data.qvel[indices["assist_qvel"]]
+                        - filtered_assist_joint_velocity
+                    )
                     assist_torque_target = (
-                        ASSIST_ACTION_SCALE
-                        * command_speed_gate(command.vx)
+                        directional_limit
+                        * joint_motion_gate(filtered_assist_joint_velocity)
                         * assist_action.astype(np.float64)
                     )
-                    max_torque_delta = ASSIST_TORQUE_RATE_LIMIT * SIM_DT * DECIMATION
+                    requested_delta = assist_torque_target - assist_torque
+                    max_torque_delta = np.where(
+                        requested_delta < 0.0,
+                        ASSIST_LIFT_TORQUE_RATE_LIMIT,
+                        ASSIST_PRESS_TORQUE_RATE_LIMIT,
+                    ) * SIM_DT * DECIMATION
                     assist_torque += np.clip(
-                        assist_torque_target - assist_torque,
+                        requested_delta,
                         -max_torque_delta,
                         max_torque_delta,
                     )
@@ -565,8 +596,8 @@ def main() -> None:
             data.ctrl[indices["policy_actuator"]] = gait_torque
             data.ctrl[indices["assist_actuator"]] = np.clip(
                 args.assist_torque_scale * assist_torque,
-                -ASSIST_ACTION_SCALE,
-                ASSIST_ACTION_SCALE,
+                -ASSIST_LIFT_TORQUE_LIMIT,
+                ASSIST_PRESS_TORQUE_LIMIT,
             )
             data.ctrl[indices["extra_actuator"]] = extra_joint_pd_torque(data, indices)
             mujoco.mj_step(model, data)

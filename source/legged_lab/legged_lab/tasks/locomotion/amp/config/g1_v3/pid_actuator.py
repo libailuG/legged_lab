@@ -31,6 +31,29 @@ class IdealPIDActuator(IdealPDActuator):
             cfg.integral_effort_limit, 0.0
         )
         self._integral_effort = torch.zeros_like(self.computed_effort)
+        self._integral_scale = 1.0
+
+    @property
+    def integral_scale(self) -> float:
+        """Current curriculum multiplier applied to the integral controller."""
+
+        return self._integral_scale
+
+    def set_training_iteration(self, iteration: int) -> float | None:
+        """Update the PD-to-PID curriculum from the restored PPO iteration."""
+
+        start = self.cfg.integral_curriculum_start_iteration
+        end = self.cfg.integral_curriculum_end_iteration
+        if start is None or end is None:
+            self._integral_scale = 1.0
+            return None
+        if end <= start:
+            raise ValueError(
+                "integral_curriculum_end_iteration must be greater than "
+                f"integral_curriculum_start_iteration, got {start} and {end}"
+            )
+        self._integral_scale = min(max((iteration - start) / (end - start), 0.0), 1.0)
+        return self._integral_scale
 
     def reset(self, env_ids: Sequence[int]):
         self._integral_effort[env_ids] = 0.0
@@ -44,11 +67,12 @@ class IdealPIDActuator(IdealPDActuator):
         error_pos = control_action.joint_positions - joint_pos
         error_vel = control_action.joint_velocities - joint_vel
 
+        integral_effort_limit = self.integral_effort_limit * self._integral_scale
         candidate_integral_effort = torch.clamp(
             self._integral_effort
-            + self.integral_gain * error_pos * self.cfg.integration_dt,
-            min=-self.integral_effort_limit,
-            max=self.integral_effort_limit,
+            + self._integral_scale * self.integral_gain * error_pos * self.cfg.integration_dt,
+            min=-integral_effort_limit,
+            max=integral_effort_limit,
         )
         candidate_effort = (
             self.stiffness * error_pos
@@ -90,3 +114,7 @@ class IdealPIDActuatorCfg(IdealPDActuatorCfg):
     """Absolute integral torque limit in N m."""
     integration_dt: float = 0.001
     """PID update period in seconds; must match the physics time step."""
+    integral_curriculum_start_iteration: int | None = None
+    """PPO iteration at which the integral multiplier starts increasing."""
+    integral_curriculum_end_iteration: int | None = None
+    """PPO iteration at which the full integral controller is enabled."""

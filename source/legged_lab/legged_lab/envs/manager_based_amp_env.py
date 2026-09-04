@@ -28,6 +28,20 @@ class ManagerBasedAmpEnv(ManagerBasedAnimationEnv):
     def __init__(self, cfg: ManagerBasedAmpEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg=cfg, render_mode=render_mode, **kwargs)
 
+    def set_training_iteration(self, iteration: int) -> dict[str, float]:
+        """Forward the restored PPO iteration to iteration-aware actuators."""
+
+        curriculum_scales = []
+        for actuator in self.scene["robot"].actuators.values():
+            setter = getattr(actuator, "set_training_iteration", None)
+            if setter is not None:
+                scale = setter(iteration)
+                if scale is not None:
+                    curriculum_scales.append(float(scale))
+        if not curriculum_scales:
+            return {}
+        return {"PID/integral_scale": sum(curriculum_scales) / len(curriculum_scales)}
+
     # def _get_amp_observations(self) -> torch.Tensor:
     #     """Get the AMP observations.
 
@@ -133,4 +147,3 @@ class ManagerBasedAmpEnv(ManagerBasedAnimationEnv):
         
         # return observations, rewards, resets and extras
         return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
-

@@ -1,0 +1,22 @@
+{
+  "source_policy": "/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-04_10-19-39_dynamics_tanh_gate_02_07_rate80/exported/policy.pt",
+  "weights_file": "assist_policy_v2.npz",
+  "dtype": "float32",
+  "policy_rate_hz": 100,
+  "history_length": 25,
+  "input_order": [
+    "25 oldest-to-newest [left_position_rad,right_position_rad]",
+    "25 oldest-to-newest [left_velocity_rad_s,right_velocity_rad_s]",
+    "25 oldest-to-newest [left_smoothed_torque_nm,right_smoothed_torque_nm]"
+  ],
+  "normalization": "(input - obs_mean) / (obs_std + normalizer_eps)",
+  "layers": [
+    150,
+    256,
+    64,
+    16,
+    2
+  ],
+  "hidden_activation": "ELU(alpha=1.0)",
+  "output": "clip action to [-1,1], multiply by 8 Nm and the smooth vx gate (0 at |vx|<=0.2 m/s, 1 at |vx|>=0.7 m/s), then slew-limit by 0.8 Nm/cycle"
+}

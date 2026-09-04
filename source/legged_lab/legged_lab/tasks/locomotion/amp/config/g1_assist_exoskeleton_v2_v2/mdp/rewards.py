@@ -25,30 +25,43 @@ def _motion_command_magnitude(
 def assist_torque_rate_l2(
     env: ManagerBasedRLEnv,
     action_name: str = "assist_torque",
-    torque_rate_limit: float = 80.0,
+    lift_torque_rate_limit: float = 80.0,
+    press_torque_rate_limit: float = 40.0,
 ) -> torch.Tensor:
     """Penalize the normalized actual assist-torque rate after rate limiting."""
     action = env.action_manager.get_term(action_name)
-    normalized_rate = action.assist_torque_rate / torque_rate_limit
+    torque_rate = action.assist_torque_rate
+    directional_limit = torch.where(
+        torque_rate < 0.0,
+        lift_torque_rate_limit,
+        press_torque_rate_limit,
+    )
+    normalized_rate = torque_rate / directional_limit
     return torch.square(normalized_rate).mean(dim=-1)
 
 
 def assist_requested_torque_rate_excess_l2(
     env: ManagerBasedRLEnv,
     action_name: str = "assist_torque",
-    torque_limit: float = 8.0,
-    torque_rate_limit: float = 80.0,
+    torque_limit: float = 10.0,
+    lift_torque_rate_limit: float = 80.0,
+    press_torque_rate_limit: float = 40.0,
 ) -> torch.Tensor:
     """Penalize only the part of the requested torque step above the slew limit.
 
     Unlike the post-limiter rate penalty, this remains informative when the
     actuator command is saturated at the configured slew-rate limit.
     """
-    if torque_limit <= 0.0 or torque_rate_limit <= 0.0:
+    if torque_limit <= 0.0 or lift_torque_rate_limit <= 0.0 or press_torque_rate_limit <= 0.0:
         raise ValueError("Torque and torque-rate limits must be greater than zero")
     action = env.action_manager.get_term(action_name)
-    allowed_delta = torque_rate_limit * env.step_dt
-    excess = torch.clamp(action.requested_torque_delta.abs() - allowed_delta, min=0.0)
+    requested_delta = action.requested_torque_delta
+    allowed_delta = torch.where(
+        requested_delta < 0.0,
+        lift_torque_rate_limit,
+        press_torque_rate_limit,
+    ) * env.step_dt
+    excess = torch.clamp(requested_delta.abs() - allowed_delta, min=0.0)
     # Normalize by the per-control-step allowance.  Normalizing by the full
     # torque range made large, rate-saturated requests look artificially small.
     return torch.square(excess / allowed_delta).mean(dim=-1)
@@ -117,7 +130,9 @@ class FilteredHipDynamicsReward(ManagerTermBase):
         mode: str,
         hip_cfg: SceneEntityCfg,
         action_name: str = "assist_torque",
-        torque_limit: float = 8.0,
+        torque_limit: float = 10.0,
+        lift_torque_limit: float = 10.0,
+        press_torque_limit: float = 4.0,
         velocity_gain: float = 0.5,
         acceleration_gain: float = 0.2,
         dynamics_scale: float = 1.5,
@@ -127,6 +142,8 @@ class FilteredHipDynamicsReward(ManagerTermBase):
     ) -> torch.Tensor:
         if torque_limit <= 0.0:
             raise ValueError("torque_limit must be greater than zero")
+        if lift_torque_limit <= 0.0 or press_torque_limit <= 0.0:
+            raise ValueError("lift_torque_limit and press_torque_limit must be greater than zero")
         if acceleration_filter_time_constant <= 0.0:
             raise ValueError("acceleration_filter_time_constant must be greater than zero")
         if dynamics_scale <= 0.0:
@@ -148,10 +165,16 @@ class FilteredHipDynamicsReward(ManagerTermBase):
                 velocity_gain * hip_vel
                 + acceleration_gain * self._filtered_acceleration
             )
+            normalized_reference = torch.tanh(dynamics_signal / dynamics_scale)
+            reference_limit = torch.where(
+                normalized_reference < 0.0,
+                lift_torque_limit,
+                press_torque_limit,
+            )
             reference_torque = (
-                torque_limit
-                * action.command_speed_gate.unsqueeze(-1)
-                * torch.tanh(dynamics_signal / dynamics_scale)
+                reference_limit
+                * action.motion_gate
+                * normalized_reference
             )
             return torch.square(
                 (assist_torque - reference_torque) / torque_limit
@@ -176,7 +199,7 @@ def assist_torque_alignment(
     env: ManagerBasedRLEnv,
     hip_cfg: SceneEntityCfg,
     assist_cfg: SceneEntityCfg,
-    torque_limit: float = 8.0,
+    torque_limit: float = 10.0,
     minimum_reference_torque: float = 0.25,
     command_name: str = "base_velocity",
     moving_threshold: float = 0.05,
@@ -202,7 +225,7 @@ def assist_torque_alignment(
 def assist_torque_zero_when_standing(
     env: ManagerBasedRLEnv,
     assist_cfg: SceneEntityCfg,
-    torque_limit: float = 8.0,
+    torque_limit: float = 10.0,
     command_name: str = "base_velocity",
     moving_threshold: float = 0.05,
     yaw_scale: float = 0.3,

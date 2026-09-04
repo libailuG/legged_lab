@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LeggedLab 训练实时日志</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: #121a2c;
+      --panel-2: #182238;
+      --border: #293653;
+      --text: #e8edf7;
+      --muted: #8f9bb3;
+      --accent: #62d6a8;
+      --danger: #ff7285;
+      --grid: rgba(143, 155, 179, 0.16);
+      --line: #67a7ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 20% -10%, #172847 0, transparent 38%), var(--bg);
+      color: var(--text);
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(11, 16, 32, 0.94);
+      backdrop-filter: blur(12px);
+    }
+    .header-row, .controls, .status-row { display: flex; align-items: center; gap: 12px; }
+    .header-row { justify-content: space-between; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 19px; letter-spacing: 0.01em; }
+    .controls { flex-wrap: wrap; }
+    label { color: var(--muted); font-size: 12px; }
+    select, button {
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 0 10px;
+      font: inherit;
+    }
+    select.run { min-width: 330px; max-width: 48vw; }
+    button { cursor: pointer; }
+    button:hover { border-color: #5270a5; }
+    button.active { border-color: var(--accent); color: var(--accent); }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      box-shadow: 0 0 0 3px rgba(143, 155, 179, 0.12);
+    }
+    .live-dot.on { background: var(--accent); box-shadow: 0 0 0 3px rgba(98, 214, 168, 0.16); }
+    .live-dot.error { background: var(--danger); box-shadow: 0 0 0 3px rgba(255, 114, 133, 0.16); }
+    .status-row { margin-top: 10px; color: var(--muted); font-size: 12px; }
+    main { padding: 18px 22px 32px; max-width: 1680px; margin: 0 auto; }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .summary-card, .chart-card, .metric-sidebar {
+      border: 1px solid var(--border);
+      background: rgba(18, 26, 44, 0.9);
+      border-radius: 10px;
+    }
+    .summary-card { padding: 13px 15px; min-height: 76px; }
+    .summary-label { color: var(--muted); font-size: 12px; }
+    .summary-value { margin-top: 5px; font-size: 23px; font-variant-numeric: tabular-nums; }
+    .dashboard-layout {
+      display: grid;
+      grid-template-columns: 310px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .metric-sidebar {
+      position: sticky;
+      top: 112px;
+      padding: 13px;
+      max-height: calc(100vh - 130px);
+      overflow: hidden;
+    }
+    .metric-sidebar h2 { margin: 0; font-size: 15px; }
+    .metric-sidebar-note { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .content-column { min-width: 0; }
+    .metric-toolbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .metric-toolbar button { height: 30px; font-size: 12px; }
+    .metric-count { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .metric-picker {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 7px 14px;
+      margin-top: 12px;
+      max-height: calc(100vh - 245px);
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .metric-option { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .metric-option input { accent-color: var(--accent); }
+    .metric-option span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+    .chart-card { min-width: 0; padding: 12px 13px 10px; position: relative; }
+    .chart-card.dragging { opacity: 0.42; }
+    .chart-card.drag-over { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .chart-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+    .drag-handle {
+      flex: 0 0 auto;
+      height: 25px;
+      padding: 0 7px;
+      cursor: grab;
+      color: var(--muted);
+      font-size: 12px;
+      user-select: none;
+    }
+    .drag-handle:active { cursor: grabbing; }
+    .chart-title { flex: 1 1 auto; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chart-value { color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .chart-wrap { height: 245px; margin-top: 7px; position: relative; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      display: none;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #080d19;
+      color: var(--text);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      transform: translate(9px, -100%);
+    }
+    .empty, .error-message { color: var(--muted); padding: 48px 10px; text-align: center; }
+    .error-message { color: var(--danger); }
+    @media (max-width: 900px) {
+      .dashboard-layout { grid-template-columns: 1fr; }
+      .metric-sidebar { position: static; max-height: none; }
+      .metric-picker { max-height: 260px; }
+      .summary { grid-template-columns: repeat(2, 1fr); }
+      .charts { grid-template-columns: 1fr; }
+      select.run { min-width: 240px; max-width: 80vw; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <h1>LeggedLab 训练实时日志</h1>
+      <div class="controls">
+        <label for="runSelect">训练 Run</label>
+        <select id="runSelect" class="run"></select>
+        <label for="rangeSelect">显示</label>
+        <select id="rangeSelect">
+          <option value="200">最近 200 点</option>
+          <option value="500" selected>最近 500 点</option>
+          <option value="1000">最近 1000 点</option>
+          <option value="0">全部（下采样）</option>
+        </select>
+        <label for="intervalSelect">刷新</label>
+        <select id="intervalSelect">
+          <option value="2000">2 秒</option>
+          <option value="3000" selected>3 秒</option>
+          <option value="5000">5 秒</option>
+          <option value="10000">10 秒</option>
+        </select>
+        <button id="pauseButton" type="button">暂停</button>
+        <button id="refreshButton" type="button">立即刷新</button>
+      </div>
+    </div>
+    <div class="status-row">
+      <span id="liveDot" class="live-dot"></span>
+      <span id="statusText">正在连接日志服务…</span>
+      <span id="logDirText"></span>
+    </div>
+  </header>
+
+  <main>
+    <div class="dashboard-layout">
+      <aside class="metric-sidebar" aria-label="曲线显示设置">
+        <h2>曲线显示</h2>
+        <div class="metric-sidebar-note">勾选需要在右侧显示的 TensorBoard 标量</div>
+        <div class="metric-toolbar">
+          <button id="selectAllButton" type="button">显示全部</button>
+          <button id="selectPreferredButton" type="button">只看重点</button>
+          <button id="selectNoneButton" type="button">全部取消</button>
+          <span id="metricCount" class="metric-count"></span>
+        </div>
+        <div id="metricPicker" class="metric-picker"></div>
+      </aside>
+
+      <div class="content-column">
+        <section class="summary" aria-label="训练摘要">
+          <div class="summary-card"><div class="summary-label">最新 iteration</div><div id="iterationValue" class="summary-value">—</div></div>
+          <div class="summary-card"><div class="summary-label">Mean reward</div><div id="rewardValue" class="summary-value">—</div></div>
+          <div class="summary-card"><div class="summary-label">Mean episode length</div><div id="lengthValue" class="summary-value">—</div></div>
+          <div class="summary-card"><div class="summary-label">Time-out 比例</div><div id="timeoutValue" class="summary-value">—</div></div>
+        </section>
+        <section id="charts" class="charts" aria-live="polite"></section>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const preferredTags = [
+        "Train/mean_reward",
+        "Train/mean_episode_length",
+        "Episode_Reward/assist_torque_hip_dynamics_tracking",
+        "Episode_Reward/assist_torque_zero_at_hip_rest",
+        "Episode_Reward/assist_output_smoothness",
+        "Episode_Reward/assist_requested_rate_excess",
+        "Episode_Reward/assist_hip_angle_error",
+        "Episode_Termination/time_out",
+        "Episode_Termination/assist_hip_angle_mismatch",
+        "Episode_Termination/base_height",
+        "Episode_Termination/bad_orientation",
+        "Policy/mean_noise_std"
+      ];
+
+      const elements = {
+        run: document.getElementById("runSelect"),
+        range: document.getElementById("rangeSelect"),
+        interval: document.getElementById("intervalSelect"),
+        pause: document.getElementById("pauseButton"),
+        refresh: document.getElementById("refreshButton"),
+        dot: document.getElementById("liveDot"),
+        status: document.getElementById("statusText"),
+        logDir: document.getElementById("logDirText"),
+        picker: document.getElementById("metricPicker"),
+        selectAll: document.getElementById("selectAllButton"),
+        selectPreferred: document.getElementById("selectPreferredButton"),
+        selectNone: document.getElementById("selectNoneButton"),
+        metricCount: document.getElementById("metricCount"),
+        charts: document.getElementById("charts"),
+        iteration: document.getElementById("iterationValue"),
+        reward: document.getElementById("rewardValue"),
+        length: document.getElementById("lengthValue"),
+        timeout: document.getElementById("timeoutValue")
+      };
+
+      const state = {
+        paused: false,
+        busy: false,
+        timer: null,
+        run: "",
+        tags: [],
+        selected: new Set(),
+        selectionMode: "all",
+        order: [],
+        draggedTag: null,
+        series: {},
+        latest: {},
+        lastStep: null,
+        chartObjects: new Map()
+      };
+
+      const formatValue = (value) => {
+        if (value === undefined || value === null || !Number.isFinite(value)) return "—";
+        const magnitude = Math.abs(value);
+        if (magnitude !== 0 && (magnitude >= 10000 || magnitude < 0.001)) return value.toExponential(3);
+        return value.toFixed(magnitude >= 100 ? 1 : magnitude >= 10 ? 2 : 4);
+      };
+
+      async function getJson(url) {
+        const response = await fetch(url, { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        return payload;
+      }
+
+      function setStatus(kind, text) {
+        elements.dot.className = `live-dot ${kind}`;
+        elements.status.textContent = text;
+      }
+
+      function storageKey(run) {
+        return `leggedlab-live-dashboard:v2:${run}`;
+      }
+
+      function normalizeTagOrder(tags, candidate = []) {
+        const valid = candidate.filter((tag, index) => tags.includes(tag) && candidate.indexOf(tag) === index);
+        return [...valid, ...tags.filter(tag => !valid.includes(tag))];
+      }
+
+      function chooseDefaultTags(tags) {
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem(storageKey(state.run)) || "null"); }
+        catch { localStorage.removeItem(storageKey(state.run)); }
+        state.order = normalizeTagOrder(tags, saved && !Array.isArray(saved) ? saved.order || [] : []);
+        if (saved && !Array.isArray(saved) && ["all", "preferred", "custom"].includes(saved.mode)) {
+          state.selectionMode = saved.mode;
+          if (saved.mode === "all") return new Set(tags);
+          if (saved.mode === "preferred") return new Set(preferredTags.filter(tag => tags.includes(tag)));
+          return new Set((saved.tags || []).filter(tag => tags.includes(tag)));
+        }
+        // Older dashboard versions stored a plain array. Keep that explicit selection.
+        if (Array.isArray(saved)) {
+          state.selectionMode = "custom";
+          return new Set(saved.filter(tag => tags.includes(tag)));
+        }
+        state.selectionMode = "all";
+        return new Set(tags);
+      }
+
+      function saveSelection() {
+        localStorage.setItem(storageKey(state.run), JSON.stringify({
+          mode: state.selectionMode,
+          tags: [...state.selected],
+          order: state.order
+        }));
+      }
+
+      function updateMetricCount() {
+        elements.metricCount.textContent = `已显示 ${state.selected.size} / ${state.tags.length} 项`;
+      }
+
+      function applySelection(mode) {
+        state.selectionMode = mode;
+        if (mode === "all") state.selected = new Set(state.tags);
+        else if (mode === "preferred") state.selected = new Set(preferredTags.filter(tag => state.tags.includes(tag)));
+        else state.selected = new Set();
+        saveSelection();
+        renderMetricPicker();
+        rebuildCharts();
+        refreshData(true);
+      }
+
+      function renderMetricPicker() {
+        elements.picker.replaceChildren();
+        for (const tag of state.tags) {
+          const label = document.createElement("label");
+          label.className = "metric-option";
+          label.title = tag;
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = state.selected.has(tag);
+          checkbox.addEventListener("change", () => {
+            checkbox.checked ? state.selected.add(tag) : state.selected.delete(tag);
+            state.selectionMode = "custom";
+            saveSelection();
+            updateMetricCount();
+            rebuildCharts();
+            refreshData(true);
+          });
+          const text = document.createElement("span");
+          text.textContent = tag;
+          label.append(checkbox, text);
+          elements.picker.append(label);
+        }
+        updateMetricCount();
+      }
+
+      function createChart(tag) {
+        const card = document.createElement("article");
+        card.className = "chart-card";
+        card.dataset.tag = tag;
+        const head = document.createElement("div");
+        head.className = "chart-head";
+        const handle = document.createElement("button");
+        handle.type = "button";
+        handle.className = "drag-handle";
+        handle.draggable = true;
+        handle.textContent = "⠿ 拖动";
+        handle.title = "拖动调整曲线位置";
+        handle.setAttribute("aria-label", `拖动 ${tag}`);
+        const title = document.createElement("div");
+        title.className = "chart-title";
+        title.textContent = tag;
+        title.title = tag;
+        const value = document.createElement("div");
+        value.className = "chart-value";
+        value.textContent = "—";
+        head.append(handle, title, value);
+        const wrap = document.createElement("div");
+        wrap.className = "chart-wrap";
+        const canvas = document.createElement("canvas");
+        canvas.setAttribute("aria-label", `${tag} 曲线`);
+        const tooltip = document.createElement("div");
+        tooltip.className = "tooltip";
+        wrap.append(canvas, tooltip);
+        card.append(head, wrap);
+        elements.charts.append(card);
+        const chart = { tag, card, wrap, canvas, tooltip, value, points: [] };
+        canvas.addEventListener("mousemove", event => showTooltip(chart, event));
+        canvas.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
+        handle.addEventListener("dragstart", event => {
+          state.draggedTag = tag;
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", tag);
+          requestAnimationFrame(() => card.classList.add("dragging"));
+        });
+        handle.addEventListener("dragend", () => {
+          state.draggedTag = null;
+          document.querySelectorAll(".chart-card").forEach(item => item.classList.remove("dragging", "drag-over"));
+        });
+        card.addEventListener("dragover", event => {
+          if (!state.draggedTag || state.draggedTag === tag) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          card.classList.add("drag-over");
+        });
+        card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
+        card.addEventListener("drop", event => {
+          event.preventDefault();
+          card.classList.remove("drag-over");
+          const sourceTag = state.draggedTag || event.dataTransfer.getData("text/plain");
+          if (!sourceTag || sourceTag === tag) return;
+          const nextOrder = state.order.filter(item => item !== sourceTag);
+          let targetIndex = nextOrder.indexOf(tag);
+          const bounds = card.getBoundingClientRect();
+          const placeAfter = event.clientY > bounds.top + bounds.height / 2;
+          if (placeAfter) targetIndex += 1;
+          nextOrder.splice(Math.max(0, targetIndex), 0, sourceTag);
+          state.order = nextOrder;
+          saveSelection();
+          rebuildCharts();
+          refreshData(true);
+        });
+        new ResizeObserver(() => drawChart(chart)).observe(wrap);
+        return chart;
+      }
+
+      function rebuildCharts() {
+        state.chartObjects.clear();
+        elements.charts.replaceChildren();
+        for (const tag of state.order.filter(tag => state.selected.has(tag))) {
+          state.chartObjects.set(tag, createChart(tag));
+        }
+        if (!state.chartObjects.size) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "请至少选择一个标量。";
+          elements.charts.append(empty);
+        }
+      }
+
+      function visiblePoints(points) {
+        const count = Number(elements.range.value);
+        return count > 0 ? points.slice(-count) : points;
+      }
+
+      function drawChart(chart) {
+        const points = visiblePoints(chart.points);
+        const canvas = chart.canvas;
+        const width = chart.wrap.clientWidth;
+        const height = chart.wrap.clientHeight;
+        if (!width || !height) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+
+        if (!points.length) {
+          ctx.fillStyle = "#8f9bb3";
+          ctx.font = "12px system-ui";
+          ctx.fillText("暂无数据", 14, 24);
+          return;
+        }
+
+        const margin = { left: 64, right: 16, top: 12, bottom: 31 };
+        const plotWidth = Math.max(1, width - margin.left - margin.right);
+        const plotHeight = Math.max(1, height - margin.top - margin.bottom);
+        const xs = points.map(point => point[0]);
+        const ys = points.map(point => point[1]).filter(Number.isFinite);
+        const xMin = Math.min(...xs);
+        const xMaxRaw = Math.max(...xs);
+        const xMax = xMaxRaw === xMin ? xMin + 1 : xMaxRaw;
+        let yMin = Math.min(...ys);
+        let yMax = Math.max(...ys);
+        if (yMin === yMax) {
+          const pad = Math.max(Math.abs(yMin) * 0.1, 1e-3);
+          yMin -= pad;
+          yMax += pad;
+        } else {
+          const pad = (yMax - yMin) * 0.08;
+          yMin -= pad;
+          yMax += pad;
+        }
+        chart.geometry = { margin, plotWidth, plotHeight, xMin, xMax, yMin, yMax, points };
+        const xMap = x => margin.left + ((x - xMin) / (xMax - xMin)) * plotWidth;
+        const yMap = y => margin.top + (1 - (y - yMin) / (yMax - yMin)) * plotHeight;
+
+        ctx.strokeStyle = "rgba(143, 155, 179, 0.16)";
+        ctx.fillStyle = "#8f9bb3";
+        ctx.font = "11px system-ui";
+        ctx.lineWidth = 1;
+        for (let index = 0; index <= 4; index += 1) {
+          const ratio = index / 4;
+          const y = margin.top + ratio * plotHeight;
+          const value = yMax - ratio * (yMax - yMin);
+          ctx.beginPath(); ctx.moveTo(margin.left, y); ctx.lineTo(width - margin.right, y); ctx.stroke();
+          ctx.textAlign = "right"; ctx.textBaseline = "middle";
+          ctx.fillText(formatValue(value), margin.left - 7, y);
+        }
+        for (let index = 0; index <= 4; index += 1) {
+          const ratio = index / 4;
+          const x = margin.left + ratio * plotWidth;
+          const value = Math.round(xMin + ratio * (xMax - xMin));
+          ctx.beginPath(); ctx.moveTo(x, margin.top); ctx.lineTo(x, height - margin.bottom); ctx.stroke();
+          ctx.textAlign = index === 0 ? "left" : index === 4 ? "right" : "center";
+          ctx.textBaseline = "top";
+          ctx.fillText(String(value), x, height - margin.bottom + 7);
+        }
+
+        ctx.strokeStyle = "#67a7ff";
+        ctx.lineWidth = 1.7;
+        ctx.beginPath();
+        let started = false;
+        for (const [step, value] of points) {
+          if (!Number.isFinite(value)) continue;
+          const x = xMap(step), y = yMap(value);
+          if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
+        }
+        ctx.stroke();
+        chart.value.textContent = formatValue(points[points.length - 1][1]);
+      }
+
+      function showTooltip(chart, event) {
+        const geometry = chart.geometry;
+        if (!geometry || !geometry.points.length) return;
+        const rect = chart.canvas.getBoundingClientRect();
+        const localX = event.clientX - rect.left;
+        const ratio = Math.max(0, Math.min(1, (localX - geometry.margin.left) / geometry.plotWidth));
+        const targetStep = geometry.xMin + ratio * (geometry.xMax - geometry.xMin);
+        let nearest = geometry.points[0];
+        let distance = Math.abs(nearest[0] - targetStep);
+        for (const point of geometry.points) {
+          const candidate = Math.abs(point[0] - targetStep);
+          if (candidate < distance) { nearest = point; distance = candidate; }
+        }
+        chart.tooltip.textContent = `iter ${nearest[0]} · ${formatValue(nearest[1])}`;
+        chart.tooltip.style.left = `${Math.max(5, Math.min(chart.wrap.clientWidth - 145, localX))}px`;
+        chart.tooltip.style.top = `${Math.max(28, event.clientY - rect.top)}px`;
+        chart.tooltip.style.display = "block";
+      }
+
+      function updateSummaries() {
+        const latest = state.latest;
+        const reward = latest["Train/mean_reward"];
+        const length = latest["Train/mean_episode_length"];
+        const timeout = latest["Episode_Termination/time_out"];
+        const iterationSource = reward || length;
+        const iteration = iterationSource ? iterationSource.step : null;
+        elements.iteration.textContent = iteration === null ? "—" : String(iteration);
+        elements.reward.textContent = reward ? formatValue(reward.value) : "—";
+        elements.length.textContent = length ? formatValue(length.value) : "—";
+        elements.timeout.textContent = timeout ? formatValue(timeout.value) : "—";
+        return iteration;
+      }
+
+      async function loadRuns(preserveSelection = true) {
+        const payload = await getJson("/api/runs");
+        elements.logDir.textContent = `· ${payload.logdir}`;
+        const prior = preserveSelection ? elements.run.value : "";
+        elements.run.replaceChildren();
+        for (const run of payload.runs) {
+          const option = document.createElement("option");
+          option.value = run.name;
+          option.textContent = run.name;
+          elements.run.append(option);
+        }
+        if (!payload.runs.length) throw new Error("日志目录中还没有 TensorBoard event 文件");
+        elements.run.value = payload.runs.some(run => run.name === prior) ? prior : payload.runs[0].name;
+        state.run = elements.run.value;
+      }
+
+      async function loadMetadata(resetSelection = false) {
+        const payload = await getJson(`/api/metadata?run=${encodeURIComponent(state.run)}`);
+        const changed = payload.tags.join("\n") !== state.tags.join("\n");
+        state.latest = payload.latest;
+        state.tags = payload.tags;
+        if (resetSelection) {
+          state.selected = chooseDefaultTags(payload.tags);
+        } else {
+          state.order = normalizeTagOrder(payload.tags, state.order);
+          if (state.selectionMode === "all") {
+          state.selected = new Set(payload.tags);
+          } else if (state.selectionMode === "preferred") {
+          state.selected = new Set(preferredTags.filter(tag => payload.tags.includes(tag)));
+          } else {
+          state.selected = new Set([...state.selected].filter(tag => payload.tags.includes(tag)));
+          }
+        }
+        if (changed || resetSelection) {
+          renderMetricPicker();
+          rebuildCharts();
+        }
+        return updateSummaries();
+      }
+
+      async function loadScalars() {
+        const params = new URLSearchParams({ run: state.run });
+        for (const tag of state.selected) params.append("tag", tag);
+        const payload = await getJson(`/api/scalars?${params}`);
+        state.series = payload.series;
+        for (const [tag, chart] of state.chartObjects) {
+          chart.points = state.series[tag] || [];
+          drawChart(chart);
+        }
+      }
+
+      async function refreshData(force = false) {
+        if (state.busy || (state.paused && !force) || !state.run) return;
+        state.busy = true;
+        setStatus("", "正在读取最新 TensorBoard 数据…");
+        try {
+          await loadRuns(true);
+          const iteration = await loadMetadata(false);
+          await loadScalars();
+          const now = new Date().toLocaleTimeString();
+          const advanced = state.lastStep === null || iteration === null || iteration > state.lastStep;
+          setStatus("on", `${advanced ? "已更新" : "已同步，等待新 iteration"} · ${now}`);
+          state.lastStep = iteration;
+        } catch (error) {
+          setStatus("error", error.message);
+        } finally {
+          state.busy = false;
+        }
+      }
+
+      function schedule() {
+        clearInterval(state.timer);
+        state.timer = setInterval(() => refreshData(false), Number(elements.interval.value));
+      }
+
+      elements.pause.addEventListener("click", () => {
+        state.paused = !state.paused;
+        elements.pause.textContent = state.paused ? "继续" : "暂停";
+        elements.pause.classList.toggle("active", state.paused);
+        setStatus(state.paused ? "" : "on", state.paused ? "自动刷新已暂停" : "自动刷新已恢复");
+        if (!state.paused) refreshData(true);
+      });
+      elements.refresh.addEventListener("click", () => refreshData(true));
+      elements.selectAll.addEventListener("click", () => applySelection("all"));
+      elements.selectPreferred.addEventListener("click", () => applySelection("preferred"));
+      elements.selectNone.addEventListener("click", () => applySelection("custom"));
+      elements.interval.addEventListener("change", schedule);
+      elements.range.addEventListener("change", () => {
+        for (const chart of state.chartObjects.values()) drawChart(chart);
+      });
+      elements.run.addEventListener("change", async () => {
+        state.run = elements.run.value;
+        state.tags = [];
+        state.selected.clear();
+        state.lastStep = null;
+        try {
+          await loadMetadata(true);
+          await refreshData(true);
+        } catch (error) {
+          setStatus("error", error.message);
+        }
+      });
+
+      window.addEventListener("focus", () => refreshData(false));
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) refreshData(false);
+      });
+
+      (async () => {
+        try {
+          await loadRuns(false);
+          await loadMetadata(true);
+          await refreshData(true);
+          schedule();
+        } catch (error) {
+          setStatus("error", error.message);
+          elements.charts.innerHTML = `<div class="error-message">${error.message}</div>`;
+        }
+      })();
+    })();
+  </script>
+</body>
+</html>

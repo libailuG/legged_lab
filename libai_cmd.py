@@ -418,4 +418,131 @@ python scripts/rsl_rl/train.py \
   --task LeggedLab-Isaac-AMP-G1-v3 \
   --num_envs 1
 
+  
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2 \
+  --headless \
+  --num_envs 6000 \
+  --max_iterations 2000 \
+  --run_name dynamics_reference_x2
+
+
+  
+  python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2 \
+  --num_envs 1 \
+  --checkpoint logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-03_11-11-00_dynamics_reference_x2/model_1999.pt \
+  --vx 1.0 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --real-time
+
+
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2.py \
+  --assist-policy logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-03_11-11-00_dynamics_reference_x2/exported/policy.pt \
+  --vx 1.0 \
+  --vy 0.0 \
+  --yaw 0.0
+
+  
+这个有用
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2.py   --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-02_10-00-19_dynamics_tracking_w8/exported/policy.pt  --vx 0.7   --output-dir /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-02_10-00-19_dynamics_tracking_w8/sim2sim_model_1999
+
+
+
+
+
+python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2 \
+  --num_envs 1 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-03_16-14-02_dynamics_x2_angle20_w1/model_1999.pt \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --real-time
+
+python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-03_16-14-02_dynamics_x2_angle20_w1/exported/policy.pt \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0
+
+
+python sim2real/g1_assist_exoskeleton_v2_dynamics_x2_angle20_w1/sim2sim_numpy_assist.py \
+  --assist-torque-scale 0.5 \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0
+
+
+  
+## 查看日志
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python \
+  scripts/tools/tensorboard_live_dashboard.py \
+  --logdir /你的程序/tensorboard日志目录 \
+  --port 6007
+
+
+
+
+python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2 \
+  --num_envs 1 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-04_10-19-39_dynamics_tanh_gate_02_07_rate80/model_1999.pt \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0
+
+  
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python \
+  scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-04_10-19-39_dynamics_tanh_gate_02_07_rate80/exported/policy.pt \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0
+
+python   scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_ppo/2026-09-04_10-19-39_dynamics_tanh_gate_02_07_rate80/exported/policy.pt \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --disable-assist
+
+python \
+  sim2real/g1_assist_exoskeleton_v2_2026-09-04_rate80/sim2sim_numpy_assist.py \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --assist-torque-scale 1.0
+
+  
+
+
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v2 \
+  --headless \
+  --num_envs 6000 \
+  --max_iterations 2000 \
+  --run_name asymmetric_lift8_press3_rate80
+
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v2 \
+  --headless \
+  --num_envs 6000 \
+  --max_iterations 2000 \
+  --run_name lift10_rate80_press4_rate40_motion_gate
+
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python \
+  scripts/tools/tensorboard_live_dashboard.py \
+  --logdir /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v2_ppo \
+  --port 6007
+
+
+
+python scripts/mujoco/sim2sim_g1_pid_v3.py \
+  --checkpoint-iteration 7000 \
+  --vx 0.5 --vy 0 --yaw 0 \
+  --policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_amp_v3/2026-09-03_13-48-47_pid_curriculum_30000/exported/policy.pt
+
 '''

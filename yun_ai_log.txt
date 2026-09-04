@@ -1,0 +1,362 @@
+===== 云服务器与 AI 对话记录 =====
+
+[2026-09-03 用户]
+要求将 /home/libai/08_amp/legged_lab 项目完整同步至租用的 SeetaCloud 服务器，并方便后续同步与查看训练结果。SSH 登录口令已在本日志中隐藏。
+
+[2026-09-03 助手]
+已将项目同步至服务器 /root/legged_lab；首次传输约 7.98 GB。已配置 Python 3.11、PyTorch 2.7.0+cu128、Isaac Sim 5.1.0、Isaac Lab v2.3.1、项目内 rsl_rl 3.2.0 和 legged_lab 0.1.0。环境实际位于 /root/autodl-tmp/legged_lab_env，并通过 /root/legged_lab/.venv 符号链接使用。已真实跑通 LeggedLab-Isaac-AMP-G1-v0 的 1 次训练迭代。headless 训练可用；云容器 Vulkan 图形接口仍有警告，可能影响 GUI/视频渲染。
+
+[2026-09-03 用户]
+要求把现在以及以后的聊天记录保存到 /home/libai/08_amp/legged_lab/yun_ai_log.txt。
+
+[2026-09-03 助手]
+开始在本文件中持续追加当前任务的用户消息与处理结果。敏感口令不写入明文。
+
+[2026-09-03 用户]
+目前这个云服务器可以训练了吗？有哪些任务
+
+[2026-09-03 用户]
+继续
+
+[2026-09-03 助手]
+确认云服务器目前可以进行 headless 训练。已实际跑通 LeggedLab-Isaac-AMP-G1-v0 的 1 次完整迭代：16 个环境、384 steps、约 158 steps/s，退出码 0。项目注册了 AMP、DeepMimic、Velocity 三类任务，共 25 个训练、播放或调试任务 ID。Vulkan 图形接口仍有警告，因此 GUI 和视频渲染可能不可用，但 headless 训练路径已验证。
+
+[2026-09-03 用户]
+LeggedLab-Isaac-AMP-G1-v3这个任务是什么？
+
+[2026-09-03 助手]
+该任务是面向带 assist-exoskeleton v2 机构模型的 Unitree G1 AMP 行走/跑步训练任务。机器人 USD 共 33 个关节，但策略、价值网络和 AMP 判别器只使用原 G1 的 29 个身体关节；额外 4 个外骨骼/后部机构关节不进入策略维度。任务采用 1 kHz 物理与显式 PID、50 Hz 策略控制，PID 带积分力矩限幅和 anti-windup。它继承基础 G1 AMP 的速度跟踪、动作平滑、姿态约束、步态奖励和 walk_and_run 动作数据，PPO/AMP 参数基本不变，日志目录为 logs/rsl_rl/g1_amp_v3。v0 已在云服务器验证，v3 尚未单独执行验证。
+
+[2026-09-03 用户]
+这个机器人整体的质量多重
+
+[2026-09-03 助手]
+直接对最终组合 USD 的 43 个带质量刚体求和，G1 assist-exoskeleton v2 的名义总质量为 82.99999985 kg，约 83.0 kg。按 URDF 中名称含 assist 的独立外骨骼部件统计为 3.2 kg，其余本体和加重结构为 79.8 kg。训练启动时会对 torso_link 额外增加 -3 至 +3 kg，并把左右肢体 link 质量分别缩放至 0.8 至 1.2 倍；全部变量同时取极值时，理论总质量范围约为 70.38 至 95.62 kg。
+
+[2026-09-03 用户]
+目前控制使用的PID，在前期训练时，不友好，有没有什么方法，逐渐过渡到PID
+
+[2026-09-03 助手]
+建议对 G1 v3 使用 PD 到 PID 的连续课程：前 500 个 PPO iteration 令积分系数 alpha=0；第 500 至 3000 iteration 将 alpha 从 0 线性升到 1，同时按 alpha 缩放 Ki 和积分力矩上限；之后使用完整 PID。积分累积也必须跟随 alpha，避免关闭阶段暗中 wind-up。当前 Ki 约为 Kp 的 10%、积分限幅 10 N·m，且 Kp/Kd 启动时随机为 0.8 至 1.2 倍；建议在 PID 过渡完成前关闭或收窄增益随机化，之后再逐渐恢复。由于当前策略是前馈网络且未观测积分状态，积分过强会形成隐藏状态；建议保持较小积分限幅，或把积分力矩加入观测/改用循环策略。最小风险方案是在现有 v3 中新增可保存、可恢复的 PID curriculum，而不是直接分段手工修改配置。
+
+[2026-09-03 用户]
+帮我制定训练计划，前5000使用纯PD 5000-10000线性增加积分系数，10000后完整PID。
+
+[2026-09-03 助手]
+制定 G1 v3 的三阶段训练计划：iteration 0 至 4999 使用纯 PD，积分系数和积分力矩限幅均为 0；iteration 5000 至 9999 使用 alpha=(iteration-5000)/5000 线性提升积分系数，并同步将积分力矩限幅从 0 提升至目标值；iteration 10000 起使用 alpha=1 的完整 PID。Kp/Kd 保持目标值不变，积分累积和输出都乘 alpha。断点续训时必须使用 checkpoint 中恢复的 PPO iteration 计算 alpha，不能按进程启动时间重新计数。监控 alpha、积分力矩、饱和率、回合长度、跌倒率和速度跟踪误差，并在 5000 与 10000 iteration 前后保留独立检查点。
+
+[2026-09-03 用户]
+现在云服务使用的什么显卡，怎么最大化进行训练
+
+[2026-09-03 助手]
+实测云服务器只有一张 NVIDIA RTX PRO 6000 Blackwell Server Edition，nvidia-smi 显存 97887 MiB，PyTorch 可用显存约 94.97 GiB，功耗上限 600 W，驱动 595.71.05；PyTorch 2.7.0+cu128 已识别 compute capability 12.0。服务器有 208 个 CPU 线程和约 1 TiB 内存，当前 GPU 空闲且没有训练进程。建议 v3 先以 8192 个环境 headless 训练，再对 12288 和 16384 环境做短基准测试，以总 FPS 而非显存占用选择最优点；显存预留 10% 至 15%。8192 环境时每次 PPO rollout 为 196608 条 transition、4 个 minibatch；若升到 12288 或 16384，分别将 minibatch 数改为 6 或 8，以维持每个 minibatch 约 49152 条样本。单卡不启用 distributed，不在正式训练中录视频，并监控 GPU 利用率、显存、功耗、FPS 和磁盘空间。项目所在系统盘剩余约 22 GiB，数据盘剩余约 31 GiB，长期训练需要定期同步日志和 checkpoint。
+
+[2026-09-03 用户]
+要求持续看守云服务器，按照三阶段 PID 计划训练 LeggedLab-Isaac-AMP-G1-v3 共 30000 iteration，并每 500 iteration 汇报一次。
+
+[2026-09-03 助手]
+已实现由恢复后的 PPO iteration 驱动的 PID curriculum：0 至 4999 为纯 PD，5000 至 9999 将积分系数及积分限幅从 0 线性增加到 100%，10000 起完整 PID；TensorBoard 增加 PID/integral_scale，控制台每 500 iteration 输出一次阶段信息。云端 16 环境单轮验证成功。吞吐基准结果：8192 环境约 17752 steps/s；12288 环境约 21718 steps/s；16384 环境热身峰值约 27108 steps/s。正式训练选择 16384 环境、8 minibatches、每 500 iteration 保存 checkpoint，并于 2026-09-03 13:48 启动，总目标 30000 iteration。正式 run 目录为 /root/legged_lab/logs/rsl_rl/g1_amp_v3/2026-09-03_13-48-47_pid_curriculum_30000，控制台日志为 /root/autodl-tmp/g1_v3_pid_30000/console.log。iteration 0 已完成，速度约 23044 steps/s，model_0.pt 已生成；当时显存约 22 GB、GPU 利用率 56%、功耗约 202 W。已创建每 10 分钟检查一次的持续监控，到达每个新的 500 iteration 里程碑时汇报，并在异常退出时诊断和从最新有效 checkpoint 续训。
+
+[2026-09-03 助手持续监控]
+正式训练运行正常，进程 PID 12168。最新观测到 iteration 4，仍处于纯 PD 阶段，积分 alpha=0。近期吞吐约 26643 至 27371 steps/s；iteration 4 的 mean reward 为 -5.78、mean episode length 为 51.06。GPU 显存约 22151 MiB、利用率 58%、功耗 162 W、温度 50 摄氏度，磁盘空间正常。尚未达到首个 500 iteration 汇报点。
+
+[2026-09-03 助手持续监控]
+TensorBoard 已推进至 iteration 9，训练进程持续运行，纯 PD 的积分 alpha 仍为 0。iteration 9 的 FPS 约 26850、mean reward -5.84、mean episode length 52.07、速度跟踪误差 XY 0.1363、yaw 0.3063；未出现 NaN、OOM 或 traceback。GPU 显存约 22151 MiB，温度约 55 摄氏度。控制台输出存在缓冲，因此持续监控已调整为优先读取 TensorBoard event 判断真实进度；尚未达到 iteration 500。
+
+[2026-09-03 助手持续监控]
+例行巡检至 iteration 12：进程、GPU 和磁盘正常，无 NaN、OOM 或 traceback；仍为纯 PD alpha=0。尚未达到 500 iteration 里程碑，未作正式阶段汇报。
+
+[2026-09-03 助手持续监控]
+静默巡检至 iteration 15：训练进程正常，纯 PD alpha=0，FPS 约 27619，无异常；尚未达到 500 iteration。
+
+[2026-09-03 助手持续监控]
+静默巡检至 iteration 17：训练进程正常，无异常，尚未达到 500 iteration。
+
+[2026-09-03 助手持续监控]
+静默巡检至 iteration 20：训练进程正常，无异常，尚未达到 500 iteration。
+
+[2026-09-03 助手持续监控]
+静默巡检至 iteration 22：训练进程正常，FPS 约 28424，无异常，尚未达到 500 iteration。
+
+[2026-09-03 助手持续监控]
+静默巡检至 iteration 24：训练进程正常，无异常，尚未达到 500 iteration。
+
+[2026-09-03 用户]
+评估下时间，迭代1000轮，需要多长时间
+
+[2026-09-03 助手]
+根据正式训练最近 50 个 iteration 的 TensorBoard 实测，每轮平均约 14.34 秒、中位数约 14.34 秒，最新 iteration 75 的单轮时间约 14.66 秒、FPS 约 26827。因此从第 0 轮完成 1000 轮约需 3 小时 59 分，加约 2 分钟场景初始化后约 4 小时；从当前 iteration 75 训练到 1000 约还需 3 小时 41 分。按当前速度，5000 轮约 19.9 小时，10000 轮约 39.8 小时，30000 轮约 119.5 小时，即约 5 天。每轮包含 16384×24=393216 条 transition，1000 轮合计约 3.93 亿条 transition。
+
+[2026-09-03 用户]
+那就改为每100轮，进行汇报，500太慢了
+
+[2026-09-03 助手]
+已将持续监控从每 500 iteration 汇报改为每 100 iteration 汇报，检查频率从每 10 分钟提高到每 5 分钟；训练不中断，checkpoint 仍每 500 iteration 保存。iteration 100：纯 PD，alpha=0；FPS 27891，mean reward -5.824，mean episode length 87.4，XY/yaw 速度误差为 0.2479/0.3248，mean noise std 0.8668。GPU 显存约 22151 MiB、利用率 85%、功耗 379.85 W、温度 60 摄氏度；无 NaN、OOM 或 traceback。当前实际已到 iteration 102，下次汇报点为 200。
+
+[2026-09-03 用户]
+训练多少轮了
+
+[2026-09-03 助手]
+TensorBoard 实测当前已到 iteration 176，约完成 30000 目标的 0.59%，仍处于纯 PD 阶段，alpha=0。训练进程正常，FPS 约 28347；最新 checkpoint 仍为 model_0.pt，按配置下一个 checkpoint 在 iteration 500。距 iteration 200 还剩约 24 轮，预计约 6 分钟。
+
+[2026-09-03 助手持续监控：iteration 200]
+纯 PD 阶段，alpha=0。FPS 28210，单轮采集 12.64 秒、学习 1.30 秒；mean reward -12.575，mean episode length 545.34，AMP total/style reward 为 -4.761/0.449，XY/yaw 速度误差为 1.615/1.843，策略噪声 1.0067。与 iteration 100 相比，平均存活长度由 87.4 提升到 545.34，约提升 6.2 倍；虽然整回合累计 reward 更负，但单位存活 step 的负回报约从 -0.0666 改善到 -0.0231。训练已实际推进到 iteration 209，进程正常；GPU 显存约 22151 MiB、温度 48 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 300。
+
+[2026-09-03 助手持续监控：iteration 300]
+纯 PD 阶段，alpha=0。FPS 29084，单轮采集 12.22 秒、学习 1.30 秒；mean reward -15.434，mean episode length 623.43，AMP total/style reward 为 -5.922/0.419，XY/yaw 速度误差为 1.704/1.810，策略噪声 1.1821。与 iteration 200 相比，平均回合长度提高约 14.3%，达到最大 1000 steps 的回合比例由约 18.5% 提高到 26.2%，base-height 终止指标由 0.584 降至 0.469；yaw 误差略有改善，XY 误差仍偏高。训练已推进到 iteration 305；GPU 显存约 22151 MiB、温度 48 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 400。
+
+[2026-09-03 助手持续监控：iteration 400]
+纯 PD 阶段，alpha=0。FPS 28275，单轮采集 12.61 秒、学习 1.30 秒；mean reward -17.880，mean episode length 745.23，AMP total/style reward 为 -6.976/0.293，XY/yaw 速度误差为 2.182/2.145，策略噪声 1.2747。与 iteration 300 相比，平均回合长度提高约 19.5%，达到最大回合长度的比例从约 26.2% 提高到 47.5%，bad-orientation 与 base-height 终止指标继续下降；但速度跟踪误差与 AMP 风格指标变差，说明当前策略主要在学习存活，尚未形成良好运动跟踪，需要继续观察 500 至 1000 的趋势。训练已推进到 iteration 405，GPU 显存约 22151 MiB、温度 49 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 500。
+
+[2026-09-03 助手持续监控：iteration 500]
+纯 PD 阶段，alpha=0。FPS 29204，单轮采集 12.17 秒、学习 1.30 秒；mean reward -17.911，mean episode length 742.70，AMP total/style reward 为 -6.937/0.380，XY/yaw 速度误差为 2.167/2.117，策略噪声 1.3038。与 iteration 400 相比，回合长度基本持平，速度误差小幅改善，AMP style reward 回升，达到最大回合长度的比例升至约 57.7%，bad-orientation 终止指标降至 0.068。model_500.pt 已生成，大小 16202319 bytes；已用 torch.load 验证可读取，内部 iter=500，并包含 policy、optimizer、AMP discriminator 及 normalizer 状态，可用于完整续训。训练已推进到 iteration 508，GPU 显存约 22151 MiB、温度 50 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 600。
+
+[2026-09-03 助手持续监控：iteration 600]
+纯 PD 阶段，alpha=0。FPS 28415，单轮采集 12.54 秒、学习 1.30 秒；mean reward -19.821，mean episode length 897.25，AMP total/style reward 为 -7.763/0.276，XY/yaw 速度误差为 2.429/2.191，策略噪声 1.3262。与 iteration 500 相比，平均回合长度提高约 20.8%，达到最大回合长度的比例升至约 63.6%，bad-orientation 与 base-height 终止指标继续下降；但速度跟踪误差继续偏高且 AMP style reward 回落，当前策略仍优先学习稳定存活。训练已推进到 iteration 607，GPU 显存约 22151 MiB、温度 56 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 700。
+
+[2026-09-03 助手持续监控：iteration 700]
+纯 PD 阶段，alpha=0。FPS 28533，单轮采集 12.48 秒、学习 1.30 秒；mean reward -16.622，mean episode length 621.05，AMP total/style reward 为 -6.430/0.365，XY/yaw 速度误差为 1.730/1.494，策略噪声 1.3349。与 iteration 600 相比，XY/yaw 速度误差分别改善约 28.8%/31.8%，AMP style reward 回升约 32.4%，mean reward 也改善；平均回合长度下降但 timeout 比例仍约 58.7%，说明策略开始由单纯站稳转向运动跟踪。训练已推进到 iteration 709，GPU 显存约 22151 MiB、温度 55 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 800。
+
+[2026-09-03 助手持续监控：iteration 800]
+纯 PD 阶段，alpha=0。FPS 28835，单轮采集 12.41 秒、学习 1.23 秒；mean reward -17.524，mean episode length 765.88，AMP total/style reward 为 -6.709/0.500，XY/yaw 速度误差为 1.963/1.607，策略噪声 1.3241。与 iteration 700 相比，平均回合长度提高约 23.3%，达到最大回合长度的比例从 58.7% 升至 74.0%，AMP style reward 提高约 37.1%，bad-orientation 与 base-height 终止继续明显下降；速度误差较 700 略有回升，但仍好于 600。训练已推进到 iteration 808，GPU 显存约 22151 MiB、温度 48 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 900。
+
+[2026-09-03 助手持续监控：iteration 900]
+纯 PD 阶段，alpha=0。FPS 28043，单轮采集 12.72 秒、学习 1.30 秒；mean reward -17.620，mean episode length 919.38，AMP total/style reward 为 -6.834/0.357，XY/yaw 速度误差为 2.534/1.658，策略噪声 1.2882。与 iteration 800 相比，平均回合长度提高约 20.0%，达到最大回合长度的比例升至约 86.0%，bad-orientation 与 base-height 终止指标降至 0.032/0.108，稳定性明显提升；但 XY 速度误差升高、AMP style reward 回落，运动跟踪仍未稳定改善。训练已推进到 iteration 910，GPU 显存约 22151 MiB、温度 59 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 1000，将同时验证 model_1000.pt 并评估是否存在站立型局部最优。
+
+[2026-09-03 助手持续监控：iteration 1000]
+纯 PD 阶段，alpha=0。FPS 28563，单轮采集 12.46 秒、学习 1.31 秒；mean reward -13.775，mean episode length 994.70，AMP total/style reward 为 -5.275/0.391，XY/yaw 速度误差为 2.715/1.327，策略噪声 1.2079。最近 20 轮均值为 mean reward -14.363、episode length 967.95、AMP style 0.434、XY/yaw 误差 2.655/1.376。达到最大回合长度比例约 95.1%，稳定性训练基本完成；yaw 跟踪改善明显，但 XY 误差继续偏高，存在站立型局部最优风险。model_1000.pt 已生成并经 torch.load 验证，内部 iter=1000。训练已推进到 iteration 1007，GPU 显存约 22151 MiB、温度 55 摄氏度，无 NaN、OOM 或 traceback。暂不改变用户指定训练计划，继续观察至至少 1500 至 2000。下一汇报点为 1100。
+
+[2026-09-03 助手持续监控：iteration 1100]
+纯 PD 阶段，alpha=0。FPS 29294，单轮采集 12.13 秒、学习 1.29 秒；mean reward -11.871，mean episode length 985.30，AMP total/style reward 为 -4.515/0.390，XY/yaw 速度误差为 2.615/1.049，策略噪声 1.1843。与 iteration 1000 相比，mean reward 改善约 13.8%，XY 误差小幅改善约 3.7%，yaw 误差改善约 20.9%，稳定性维持在约 94.9% timeout；趋势恢复健康，但 XY 跟踪仍需重点观察。训练已推进到 iteration 1107，GPU 显存约 22151 MiB、温度 50 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 1200。
+
+[2026-09-03 助手持续监控：iteration 1200]
+纯 PD 阶段，alpha=0。FPS 28528，单轮采集 12.48 秒、学习 1.30 秒；mean reward -10.022，mean episode length 986.80，AMP total/style reward 为 -3.732/0.461，XY/yaw 速度误差为 2.669/0.929，策略噪声 1.1671。与 iteration 1100 相比，mean reward 改善约 15.6%，AMP style reward 提高约 18.2%，yaw 误差改善约 11.4%，XY 误差小幅波动上升约 2.1%；timeout 比例约 96.0%，稳定性保持良好。训练已推进到 iteration 1208，GPU 显存约 22151 MiB、温度 56 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 1300。
+
+[2026-09-03 助手持续监控：iteration 1300]
+纯 PD 阶段，alpha=0。FPS 28767，单轮采集 12.38 秒、学习 1.29 秒；mean reward -8.860，mean episode length 980.47，AMP total/style reward 为 -3.272/0.453，XY/yaw 速度误差为 2.719/0.821，策略噪声 1.1516。与 iteration 1200 相比，mean reward 改善约 11.6%，yaw 误差改善约 11.7%，XY 误差小幅上升约 1.9%，AMP style 基本持平；timeout 比例升至约 96.9%。训练已推进到 iteration 1309，GPU 显存约 22151 MiB、温度 51 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 1400。
+
+[2026-09-03 助手持续监控：iteration 1400]
+纯 PD 阶段，alpha=0。FPS 29104，单轮采集 12.22 秒、学习 1.29 秒；mean reward -8.121，mean episode length 1000.0，AMP total/style reward 为 -3.040/0.348，XY/yaw 速度误差为 2.695/0.804，策略噪声 1.1508。与 iteration 1300 相比，mean reward 改善约 8.3%，XY/yaw 误差分别小幅改善约 0.9%/2.0%；平均回合长度达到完整 1000 steps，timeout 比例约 96.2%，稳定性已经饱和。AMP style reward 有所回落，仍需继续观察运动质量。训练已推进到 iteration 1426，GPU 显存约 22151 MiB、温度 55 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 1500。
+
+[2026-09-03 助手持续监控：iteration 1500]
+纯 PD 阶段，alpha=0。FPS 30045，单轮采集 11.85 秒、学习 1.24 秒；mean reward -7.358，mean episode length 1000.0，AMP total/style reward 为 -2.746/0.328，XY/yaw 速度误差为 2.605/0.752，策略噪声 1.1477。与 iteration 1400 相比，mean reward 改善约 9.4%，XY/yaw 误差分别改善约 3.4%/6.5%，稳定性维持饱和，AMP style reward 小幅回落。model_1500.pt 已生成并验证内部 iter=1500。训练已推进到 iteration 1506，GPU 显存约 22151 MiB、温度 50 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 1600。
+
+[2026-09-03 助手持续监控：iteration 1600]
+纯 PD 阶段，alpha=0。FPS 28044，单轮采集 12.70 秒、学习 1.32 秒；mean reward -6.568，mean episode length 973.16，AMP total/style reward 为 -2.396/0.385，XY/yaw 速度误差为 2.536/0.759，策略噪声 1.1426。与 iteration 1500 相比，mean reward 改善约 10.7%，XY 误差改善约 2.7%，yaw 误差基本持平，AMP style reward 提高约 17.3%；timeout 比例约 96.2%，稳定性维持良好。训练已推进到 iteration 1602，GPU 显存约 22151 MiB、温度 54 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 1700。
+
+[2026-09-03 助手持续监控：iteration 1700]
+纯 PD 阶段，alpha=0。FPS 29550，单轮采集 12.04 秒、学习 1.26 秒；mean reward -7.384，mean episode length 991.92，AMP total/style reward 为 -2.811/0.238，XY/yaw 速度误差为 2.665/0.736，策略噪声 1.1473。与 iteration 1600 相比，平均回合长度恢复约 1.9%，yaw 误差改善约 3.1%；但 mean reward 回落约 12.4%、XY 误差上升约 5.1%，AMP style reward 波动下降。timeout 比例约 95.9%，整体稳定性仍良好，单点回落暂未构成异常。训练已推进到 iteration 1709，进程存活，GPU 显存约 22151 MiB、温度 46 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 1800。
+
+[2026-09-03 助手持续监控：iteration 1800]
+纯 PD 阶段，alpha=0。FPS 29280，单轮采集 12.18 秒、学习 1.25 秒；mean reward -6.875，mean episode length 990.77，AMP total/style reward 为 -2.517/0.387，XY/yaw 速度误差为 2.670/0.711，策略噪声 1.1390。与 iteration 1700 相比，mean reward 改善约 6.9%，AMP style reward 回升约 63.0%，yaw 误差改善约 3.4%；XY 误差基本持平，timeout 比例升至约 96.5%，稳定性保持良好。训练已推进到 iteration 1802，进程存活，GPU 显存约 22151 MiB、温度 49 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 1900。
+
+[2026-09-03 助手持续监控：iteration 1900]
+纯 PD 阶段，alpha=0。FPS 28566，单轮采集 12.51 秒、学习 1.26 秒；mean reward -7.621，mean episode length 941.63，AMP total/style reward 为 -2.812/0.394，XY/yaw 速度误差为 2.568/0.717，策略噪声 1.1433。与 iteration 1800 相比，XY 速度误差改善约 3.8%，AMP style reward 基本持平，yaw 误差小幅波动；mean reward 回落约 10.9%、平均回合长度下降约 5.0%，但 timeout 比例仍约 96.0%，不属于失稳。训练已推进到 iteration 1904，进程存活，GPU 显存约 22151 MiB、温度 54 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 2000，并验证 model_2000.pt。
+
+[2026-09-03 助手持续监控：iteration 2000]
+纯 PD 阶段，alpha=0。FPS 28732，单轮采集 12.36 秒、学习 1.32 秒；mean reward -6.085，mean episode length 995.55，AMP total/style reward 为 -2.211/0.372，XY/yaw 速度误差为 2.734/0.699，策略噪声 1.1423。与 iteration 1900 相比，mean reward 改善约 20.2%，平均回合长度恢复约 5.7%，yaw 误差改善约 2.6%；XY 误差上升约 6.5%，仍需持续关注。timeout 比例约 95.7%，稳定性保持良好。model_2000.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=2000，包含 policy、optimizer、AMP discriminator 及 normalizer 状态，可用于完整续训。训练已推进到 iteration 2001，进程存活，GPU 显存约 22151 MiB、温度 54 摄氏度，磁盘剩余约 22 GiB，无 NaN、OOM 或 traceback。下一汇报点为 2100。
+
+[2026-09-03 助手持续监控：iteration 2100]
+纯 PD 阶段，alpha=0。FPS 28032，单轮采集 12.72 秒、学习 1.30 秒；mean reward -7.218，mean episode length 995.59，AMP total/style reward 为 -2.592/0.492，XY/yaw 速度误差为 2.764/0.711，策略噪声 1.1332。与 iteration 2000 相比，AMP style reward 提高约 32.1%，回合长度保持接近满长；mean reward 回落约 18.6%，XY/yaw 误差分别小幅上升约 1.1%/1.7%。timeout 比例约 96.9%，bad-orientation 与 base-height 终止进一步下降，整体稳定性良好，指标波动仍属正常。训练已推进到 iteration 2103，进程存活，GPU 显存约 22151 MiB、温度 49 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 2200。
+
+[2026-09-03 助手持续监控：iteration 2200]
+纯 PD 阶段，alpha=0。FPS 28832，单轮采集 12.34 秒、学习 1.30 秒；mean reward -6.484，mean episode length 991.06，AMP total/style reward 为 -2.412/0.303，XY/yaw 速度误差为 2.671/0.683，策略噪声 1.1317。与 iteration 2100 相比，mean reward 改善约 10.2%，XY/yaw 误差分别改善约 3.4%/4.0%；AMP style reward 回落约 38.3%，需继续观察动作风格波动。timeout 比例约 96.9%，稳定性维持良好。训练已推进到 iteration 2202，进程存活，GPU 显存约 22151 MiB、温度 54 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 2300。
+
+[2026-09-03 助手持续监控：iteration 2300]
+纯 PD 阶段，alpha=0。FPS 29467，单轮采集 12.04 秒、学习 1.30 秒；mean reward -7.185，mean episode length 986.95，AMP total/style reward 为 -2.537/0.561，XY/yaw 速度误差为 2.608/0.697，策略噪声 1.1377，学习率 0.0002563。与 iteration 2200 相比，XY 误差改善约 2.4%，AMP style reward 提高约 85.0%；mean reward 回落约 10.8%，yaw 误差小幅上升约 2.1%。timeout 比例约 96.6%，稳定性保持良好；自适应学习率由 0.0003844 降至 0.0002563，属于 PPO 调度行为。训练已推进到 iteration 2304，进程存活，GPU 显存约 22151 MiB、温度 54 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 2400。
+
+[2026-09-03 助手持续监控：iteration 2400]
+纯 PD 阶段，alpha=0。FPS 29398，单轮采集 12.07 秒、学习 1.31 秒；mean reward -7.143，mean episode length 973.85，AMP total/style reward 为 -2.564/0.489，XY/yaw 速度误差为 2.659/0.699，策略噪声 1.1368。与 iteration 2300 相比，mean reward 基本持平，回合长度下降约 1.3%，AMP style reward 回落约 12.9%，XY/yaw 误差小幅上升；timeout 比例约 97.5%，总体稳定性仍很好，无失稳迹象。
+
+[2026-09-03 助手持续监控：iteration 2500]
+纯 PD 阶段，alpha=0。FPS 29596，单轮采集 11.99 秒、学习 1.29 秒；mean reward -6.673，mean episode length 990.83，AMP total/style reward 为 -2.514/0.259，XY/yaw 速度误差为 2.653/0.665，策略噪声 1.1352。与 iteration 2400 相比，mean reward 改善约 6.6%，回合长度提高约 1.7%，yaw 误差改善约 4.9%，XY 误差基本持平；AMP style reward 回落约 47.0%，其短期波动仍需观察。timeout 比例约 97.0%，稳定性良好。model_2500.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=2500，包含 policy、optimizer、AMP discriminator 及 normalizer 状态，可用于完整续训。训练已推进到 iteration 2521，进程存活，GPU 显存约 22151 MiB、温度 54 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 2600。
+
+[2026-09-03 助手持续监控：iteration 2600]
+纯 PD 阶段，alpha=0。FPS 28092，单轮采集 12.68 秒、学习 1.32 秒；mean reward -6.239，mean episode length 973.29，AMP total/style reward 为 -2.137/0.598，XY/yaw 速度误差为 2.678/0.699，策略噪声 1.1354。与 iteration 2500 相比，mean reward 改善约 6.5%，AMP style reward 从 0.259 回升至 0.598；XY/yaw 误差分别小幅上升约 1.0%/5.1%，回合长度下降约 1.8%。timeout 比例升至约 98.2%，bad-orientation 与 base-height 终止很低，整体稳定性优秀。训练已推进到 iteration 2617，进程存活，GPU 显存约 22151 MiB、温度 48 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 2700。
+
+[2026-09-04 助手持续监控：iteration 2700]
+纯 PD 阶段，alpha=0。FPS 29040，单轮采集 12.25 秒、学习 1.29 秒；mean reward -5.476，mean episode length 955.28，AMP total/style reward 为 -1.936/0.424，XY/yaw 速度误差为 2.558/0.709，策略噪声 1.1276。与 iteration 2600 相比，mean reward 改善约 12.2%，XY 误差改善约 4.5%；yaw 误差小幅上升约 1.5%，AMP style reward 回落约 29.1%，平均回合长度下降约 1.9%。timeout 比例约 97.5%，整体稳定性保持良好。训练已推进到 iteration 2715，进程存活，GPU 显存约 22151 MiB、温度 54 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 2800。
+
+[2026-09-04 助手持续监控：iteration 2800]
+纯 PD 阶段，alpha=0。FPS 28654，单轮采集 12.39 秒、学习 1.33 秒；mean reward -6.831，mean episode length 990.94，AMP total/style reward 为 -2.591/0.236，XY/yaw 速度误差为 2.661/0.673，策略噪声 1.1291，学习率 0.0002563。与 iteration 2700 相比，平均回合长度提高约 3.7%，yaw 误差改善约 5.2%；mean reward 回落约 24.7%，XY 误差上升约 4.0%，AMP style reward 回落约 44.3%，需继续观察短期波动。timeout 比例约 96.2%，整体仍稳定。训练已推进到 iteration 2811，进程存活；GPU 显存约 22151 MiB、瞬时利用率 85%、功耗约 381 W、温度 55 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 2900。
+
+[2026-09-04 助手持续监控：iteration 2900]
+纯 PD 阶段，alpha=0。FPS 28891，单轮采集 12.31 秒、学习 1.30 秒；mean reward -6.997，mean episode length 983.67，AMP total/style reward 为 -2.409/0.650，XY/yaw 速度误差为 2.620/0.705，策略噪声 1.1293，学习率 0.0002563。与 iteration 2800 相比，AMP style reward 从 0.236 显著回升至 0.650，XY 误差改善约 1.5%；mean reward 小幅回落约 2.4%，yaw 误差上升约 4.8%。timeout 比例约 97.1%，整体稳定。训练已推进到 iteration 2911，进程存活；GPU 显存约 22151 MiB、温度 47 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 3000，并验证 model_3000.pt。
+
+[2026-09-04 助手持续监控：iteration 3000]
+纯 PD 阶段，alpha=0。FPS 29480，单轮采集 12.02 秒、学习 1.32 秒；mean reward -5.766，mean episode length 990.83，AMP total/style reward 为 -2.128/0.298，XY/yaw 速度误差为 2.681/0.655，策略噪声 1.1246，学习率 0.0002563。与 iteration 2900 相比，mean reward 改善约 17.6%，yaw 误差改善约 7.0%，回合长度略有提升；XY 误差上升约 2.3%，AMP style reward 回落约 54.1%，继续视为高波动指标重点观察。timeout 比例约 97.3%，整体稳定。model_3000.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=3000，包含 policy、optimizer、AMP discriminator 及 normalizer 状态，可用于完整续训。训练已推进到 iteration 3011，进程存活；GPU 显存约 22151 MiB、温度 46 摄氏度，磁盘剩余约 22 GiB，无 NaN、OOM 或 traceback。下一汇报点为 3100。
+
+[2026-09-04 助手持续监控：iteration 3100]
+纯 PD 阶段，alpha=0。FPS 31894，单轮采集 11.13 秒、学习 1.20 秒；mean reward -6.317，mean episode length 996.75，AMP total/style reward 为 -2.328/0.331，XY/yaw 速度误差为 2.713/0.672，策略噪声 1.1292。与 iteration 3000 相比，回合长度提升至接近满长、AMP style reward 提高约 11.2%；mean reward 回落约 9.6%，XY/yaw 误差分别小幅上升约 1.2%/2.6%。timeout 比例约 97.8%，base-height 终止降至约 0.18%，整体稳定性优秀；FPS 升至 31894。训练已推进到 iteration 3112，进程存活；GPU 显存约 22151 MiB、温度 47 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 3200。
+
+[2026-09-04 助手持续监控：iteration 3200]
+纯 PD 阶段，alpha=0。FPS 31484，单轮采集 11.18 秒、学习 1.31 秒；mean reward -6.267，mean episode length 966.35，AMP total/style reward 为 -2.228/0.464，XY/yaw 速度误差为 2.687/0.671，策略噪声 1.1257。与 iteration 3100 相比，mean reward 基本持平，AMP style reward 提高约 40.0%，XY 误差改善约 1.0%，yaw 误差基本不变；平均回合长度下降约 3.0%，但 timeout 比例约 97.9%，稳定性仍优秀。训练已推进到 iteration 3217，进程存活；GPU 显存约 22151 MiB、瞬时利用率 65%、功耗约 343 W、温度 47 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 3300。
+
+[2026-09-04 助手持续监控：iteration 3300]
+纯 PD 阶段，alpha=0。FPS 29789，单轮采集 11.89 秒、学习 1.31 秒；mean reward -5.618，mean episode length 1000.0，AMP total/style reward 为 -2.115/0.220，XY/yaw 速度误差为 2.588/0.640，策略噪声 1.1211。与 iteration 3200 相比，mean reward 改善约 10.4%，平均回合长度达到满长，XY/yaw 误差分别改善约 3.7%/4.7%；AMP style reward 回落约 52.5%，继续观察其高波动。timeout 比例约 97.5%，整体稳定性优秀。训练已推进到 iteration 3318，进程存活；GPU 显存约 22151 MiB、温度 46 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 3400。
+
+[2026-09-04 助手持续监控：iteration 3400]
+纯 PD 阶段，alpha=0。FPS 29177，单轮采集 12.18 秒、学习 1.30 秒；mean reward -6.234，mean episode length 1000.0，AMP total/style reward 为 -2.241/0.420，XY/yaw 速度误差为 2.600/0.671，策略噪声 1.1243。与 iteration 3300 相比，AMP style reward 从 0.220 回升至 0.420；mean reward 回落约 11.0%，XY/yaw 误差分别小幅上升约 0.5%/4.9%。平均回合长度保持满长，timeout 比例升至约 98.3%，base-height 终止降至约 0.08%，稳定性优秀。训练已推进到 iteration 3419，进程存活；GPU 显存约 22151 MiB、温度 46 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 3500，并验证 model_3500.pt。
+
+[2026-09-04 助手持续监控：iteration 3500]
+纯 PD 阶段，alpha=0。FPS 31108，单轮采集 11.43 秒、学习 1.21 秒；mean reward -5.964，mean episode length 991.03，AMP total/style reward 为 -2.226/0.266，XY/yaw 速度误差为 2.644/0.661，策略噪声 1.1213，学习率 0.0002563。与 iteration 3400 相比，mean reward 改善约 4.3%，yaw 误差改善约 1.5%；XY 误差上升约 1.7%，AMP style reward 回落约 36.8%，回合长度仍接近满长。timeout 比例约 97.8%，整体稳定。model_3500.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=3500，包含 policy、optimizer、AMP discriminator 及 normalizer 状态，可用于完整续训。训练已推进到 iteration 3521，进程存活；GPU 显存约 22151 MiB、利用率 87%、功耗约 337 W、温度 50 摄氏度，磁盘剩余约 22 GiB，无 NaN、OOM 或 traceback。下一汇报点为 3600。
+
+[2026-09-04 助手持续监控：iteration 3600]
+纯 PD 阶段，alpha=0。FPS 28246，单轮采集 12.63 秒、学习 1.29 秒；mean reward -5.538，mean episode length 991.13，AMP total/style reward 为 -2.082/0.222，XY/yaw 速度误差为 2.616/0.647，策略噪声 1.1248。与 iteration 3500 相比，mean reward 改善约 7.1%，XY/yaw 误差分别改善约 1.1%/2.2%，平均回合长度基本不变；AMP style reward 回落约 16.4%。timeout 比例约 97.7%，整体稳定性良好。训练已推进到 iteration 3625，进程存活；GPU 显存约 22151 MiB、温度 47 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 3700。
+
+[2026-09-04 助手持续监控：iteration 3700]
+纯 PD 阶段，alpha=0。FPS 29177，单轮采集 12.18 秒、学习 1.29 秒；mean reward -5.552，mean episode length 973.08，AMP total/style reward 为 -1.960/0.435，XY/yaw 速度误差为 2.684/0.663，策略噪声 1.1212。与 iteration 3600 相比，mean reward 基本不变，AMP style reward 从 0.222 回升至 0.435；XY/yaw 误差分别小幅上升约 2.6%/2.6%，回合长度下降约 1.8%。timeout 比例升至约 98.25%，整体稳定性优秀。训练已推进到 iteration 3704，进程存活；GPU 显存约 22151 MiB、温度 47 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 3800。
+
+[2026-09-04 助手持续监控：iteration 3800]
+纯 PD 阶段，alpha=0。FPS 29791，单轮采集 11.94 秒、学习 1.26 秒；mean reward -5.372，mean episode length 1000.0，AMP total/style reward 为 -2.002/0.244，XY/yaw 速度误差为 2.632/0.653，策略噪声 1.1201。与 iteration 3700 相比，mean reward 改善约 3.2%，平均回合长度恢复至满长，XY/yaw 误差分别改善约 1.9%/1.6%；AMP style reward 回落约 43.9%，仍保持高波动。timeout 比例约 97.6%，整体稳定。训练已推进到 iteration 3808，进程存活；GPU 显存约 22151 MiB、温度 48 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 3900。
+
+[2026-09-04 助手持续监控：iteration 3900]
+纯 PD 阶段，alpha=0。FPS 29531，单轮采集 12.02 秒、学习 1.29 秒；mean reward -5.036，mean episode length 996.17，AMP total/style reward 为 -1.753/0.435，XY/yaw 速度误差为 2.602/0.657，策略噪声 1.1276。与 iteration 3800 相比，mean reward 改善约 6.3%，AMP style reward 从 0.244 回升至 0.435，XY 误差改善约 1.1%；yaw 误差基本持平，回合长度仍接近满长。timeout 比例约 96.7%，整体稳定。训练已推进到 iteration 3909，进程存活；GPU 显存约 22151 MiB、温度 46 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 4000，并验证 model_4000.pt。
+
+[2026-09-04 助手持续监控：iteration 4000]
+纯 PD 阶段，alpha=0。FPS 29790，单轮采集 12.00 秒、学习 1.20 秒；mean reward -6.180，mean episode length 946.45，AMP total/style reward 为 -2.252/0.367，XY/yaw 速度误差为 2.550/0.661，策略噪声 1.1235。与 iteration 3900 相比，XY 误差改善约 2.0%，yaw 误差基本持平；mean reward 回落约 22.7%，平均回合长度下降约 5.0%，AMP style reward 回落约 15.6%，但 timeout 比例仍约 97.7%，未出现失稳。相较 iteration 1000，mean reward 从 -13.775 改善至 -6.180，yaw 误差从 1.327 改善至 0.661，长期趋势明显向好。model_4000.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=4000，续训状态完整。训练已推进到 iteration 4013，进程存活；GPU 显存约 22151 MiB、温度 47 摄氏度，磁盘剩余约 22 GiB，无 NaN、OOM 或 traceback。下一汇报点为 4100。
+
+[2026-09-04 助手持续监控：iteration 4100]
+纯 PD 阶段，alpha=0。FPS 29812，单轮采集 11.90 秒、学习 1.29 秒；mean reward -5.334，mean episode length 981.68，AMP total/style reward 为 -1.989/0.241，XY/yaw 速度误差为 2.565/0.647，策略噪声 1.1177。与 iteration 4000 相比，mean reward 改善约 13.7%，平均回合长度提高约 3.7%，yaw 误差改善约 2.0%；XY 误差基本持平，AMP style reward 回落约 34.3%。timeout 比例约 97.6%，整体稳定。训练已推进到 iteration 4115，进程存活；GPU 显存约 22151 MiB、温度 46 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 4200。
+
+[2026-09-04 助手持续监控：iteration 4200]
+纯 PD 阶段，alpha=0。FPS 28985，单轮采集 12.26 秒、学习 1.31 秒；mean reward -5.639，mean episode length 981.74，AMP total/style reward 为 -1.981/0.457，XY/yaw 速度误差为 2.666/0.669，策略噪声 1.1246，学习率 0.0001709。与 iteration 4100 相比，AMP style reward 从 0.241 回升至 0.457，回合长度基本不变；mean reward 回落约 5.7%，XY/yaw 误差分别上升约 3.9%/3.4%。timeout 比例约 97.4%，整体仍稳定；学习率下降是 PPO 自适应调度。训练已推进到 iteration 4215，进程存活；GPU 显存约 22151 MiB、温度 46 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 4300。
+
+[2026-09-04 助手持续监控：iteration 4300]
+纯 PD 阶段，alpha=0。FPS 28818，单轮采集 12.43 秒、学习 1.21 秒；mean reward -5.600，mean episode length 965.27，AMP total/style reward 为 -2.059/0.301，XY/yaw 速度误差为 2.385/0.653，策略噪声 1.1341。与 iteration 4200 相比，mean reward基本持平，XY 误差显著改善约 10.6%，yaw 误差改善约 2.5%；AMP style reward 回落约 34.0%，平均回合长度下降约 1.7%。timeout 比例约 96.7%，整体仍稳定。训练已推进到 iteration 4317，进程存活；GPU 显存约 22151 MiB、温度 46 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 4400。
+
+[2026-09-04 助手持续监控：iteration 4400]
+纯 PD 阶段，alpha=0。FPS 28500，单轮采集 12.49 秒、学习 1.31 秒；mean reward -6.028，mean episode length 1000.0，AMP total/style reward 为 -2.244/0.278，XY/yaw 速度误差为 2.635/0.653，策略噪声 1.1274。与 iteration 4300 相比，平均回合长度恢复至满长，yaw 误差基本不变；mean reward 回落约 7.6%，XY 误差反弹约 10.5%，AMP style reward 小幅回落。timeout 比例约 97.2%，整体仍稳定，XY 改善尚未固化。训练已推进到 iteration 4410，进程存活；GPU 显存约 22151 MiB、温度 52 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 4500，并验证 model_4500.pt。
+
+[2026-09-04 助手持续监控：iteration 4500]
+纯 PD 阶段，alpha=0。FPS 29267，单轮采集 12.11 秒、学习 1.32 秒；mean reward -5.298，mean episode length 972.45，AMP total/style reward 为 -1.875/0.406，XY/yaw 速度误差为 2.631/0.663，策略噪声 1.1206，学习率 0.0002563。与 iteration 4400 相比，mean reward 改善约 12.1%，AMP style reward 提高约 46.2%，XY 误差基本持平；yaw 误差上升约 1.5%，回合长度下降约 2.8%。timeout 比例约 97.9%，整体稳定。model_4500.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=4500，续训状态完整。训练已推进到 iteration 4508，进程存活；GPU 显存约 22151 MiB、温度 52 摄氏度，磁盘剩余约 22 GiB，无 NaN、OOM 或 traceback。下一汇报点为 4600。
+
+[2026-09-04 助手持续监控：iteration 4600]
+纯 PD 阶段，alpha=0。FPS 29536，单轮采集 12.01 秒、学习 1.30 秒；mean reward -5.544，mean episode length 988.69，AMP total/style reward 为 -2.041/0.294，XY/yaw 速度误差为 2.591/0.660，策略噪声 1.1104。与 iteration 4500 相比，平均回合长度提高约 1.7%，XY 误差改善约 1.5%，yaw 误差基本持平；mean reward 回落约 4.6%，AMP style reward 回落约 27.6%。timeout 比例升至约 98.2%，整体稳定性优秀。训练已推进到 iteration 4605，进程存活；GPU 显存约 22151 MiB、利用率 84%、温度 49 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 4700。
+
+[2026-09-04 助手持续监控：iteration 4700]
+纯 PD 阶段，alpha=0。FPS 28222，单轮采集 12.57 秒、学习 1.36 秒；mean reward -4.817，mean episode length 975.03，AMP total/style reward 为 -1.711/0.359，XY/yaw 速度误差为 2.608/0.664，策略噪声 1.1112。与 iteration 4600 相比，mean reward 改善约 13.1%，AMP style reward 提高约 22.2%；XY/yaw 误差小幅上升不足 1%，回合长度下降约 1.4%。timeout 比例约 98.1%，整体稳定性优秀。训练已推进到 iteration 4703，进程存活；GPU 显存约 22153 MiB、温度 52 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 4800。
+
+[2026-09-04 助手持续监控：iteration 4800]
+纯 PD 阶段，alpha=0。FPS 29319，单轮采集 12.07 秒、学习 1.34 秒；mean reward -4.847，mean episode length 996.21，AMP total/style reward 为 -1.719/0.367，XY/yaw 速度误差为 2.490/0.648，策略噪声 1.1110。与 iteration 4700 相比，mean reward基本持平，平均回合长度提高约 2.2%，AMP style reward略有提高，XY/yaw 误差分别改善约 4.5%/2.5%。timeout 比例约 98.0%，整体稳定性优秀。训练已推进到 iteration 4823，进程存活；GPU 显存约 22153 MiB、温度 52 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 4900。
+
+[2026-09-04 助手持续监控：iteration 4900]
+纯 PD 阶段，alpha=0。FPS 29307，单轮采集 12.11 秒、学习 1.30 秒；mean reward -5.823，mean episode length 981.65，AMP total/style reward 为 -2.117/0.354，XY/yaw 速度误差为 2.657/0.631，策略噪声 1.1042，学习率 0.0002563。与 iteration 4800 相比，yaw 误差改善约 2.7%，timeout 比例升至约 98.3%；mean reward 回落约 20.1%，XY 误差上升约 6.7%，AMP style reward 与回合长度小幅回落。整体仍稳定，无失稳信号。训练已推进到 iteration 4921，进程存活；GPU 显存约 22153 MiB、温度 46 摄氏度，无 NaN、OOM 或 traceback。下一汇报点为 5000，将验证 model_5000.pt 和积分系数由 0 开始线性增长的阶段切换。
+
+[2026-09-04 助手持续监控：iteration 5000，进入第二阶段]
+第 5000 轮为纯 PD 到积分线性增益阶段的连续边界，alpha=0。FPS 29547，单轮采集 12.01 秒、学习 1.30 秒；mean reward -5.497，mean episode length 982.08，AMP total/style reward 为 -1.993/0.344，XY/yaw 速度误差为 2.684/0.645，策略噪声 1.1110，学习率 0.0002563。与 iteration 4900 相比，mean reward 改善约 5.6%，其余指标小幅波动，timeout 比例约 97.9%，边界处没有失稳。已通过 TensorBoard 逐点验证积分比例：iteration 4999=0、5000=0、5001=0.0002、5002=0.0004、5018=0.0036，严格符合 alpha=(iteration-5000)/5000 的线性计划，说明第二阶段已自动生效。model_5000.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=5000，续训状态完整。训练已推进到 iteration 5018，进程存活；GPU 显存约 22153 MiB、利用率 81%、温度 52 摄氏度，磁盘剩余约 22 GiB，无 NaN、OOM 或 traceback。下一汇报点为 5100。
+
+[2026-09-04 助手持续监控：iteration 5100]
+积分线性增加阶段，iteration 5100 的 alpha=0.0200，训练已推进到 iteration 5115（当前 alpha=0.0230）。FPS 28567，单轮采集 12.46 秒、学习 1.30 秒；mean reward -4.372，mean episode length 970.19，AMP total/style reward 为 -1.569/0.300，XY/yaw 速度误差为 2.568/0.638，策略噪声 1.1127，学习率 0.0003844。与 iteration 5000 相比，mean reward 改善约 20.5%，XY/yaw 速度误差分别改善约 4.3%/1.1%；平均回合长度下降约 1.2%，AMP style reward 回落约 12.8%，FPS 下降约 3.3%，均属正常波动。timeout 比例约 97.4%，未见积分逐步引入造成的失稳。训练进程 PID 12168 正常存活；GPU 为 NVIDIA RTX PRO 6000 Blackwell Server Edition，显存使用 22153 MiB、利用率 54%、功耗 182 W、温度 52 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 5200。
+
+[2026-09-04 08:55 助手状态]
+持续监控任务保持运行，最近已完成 iteration 5100 汇报，下一有效汇报点为 5200；当前无需用户操作。
+
+[2026-09-04 助手监控计划状态]
+三阶段 PID 控制逻辑及训练启动已完成并验证；当前持续训练至 30000，并按用户最新要求每 100 iteration 检查 TensorBoard、训练进程、GPU、磁盘与异常。达到 30000 后将核验最终 checkpoint、训练轮数和可恢复性，并汇报最终模型路径。
+
+[2026-09-04 助手自动化核验]
+已核验持续监控自动化 g1-v3 状态为 ACTIVE，绑定当前任务并每 5 分钟触发；其配置按最新要求每跨过 100 iteration 汇报一次、checkpoint 每 500 iteration 保持不变，直到 30000 后完成最终核验并停止。
+
+[2026-09-04 09:01 助手内部监控]
+TensorBoard 最新 iteration 5155，积分 alpha=0.0310；训练进程 PID 12168 正常，未发现 NaN、OOM、traceback 或 exception。尚未到 5200 汇报点，不发送重复指标。
+
+[2026-09-04 助手持续监控：iteration 5200]
+积分线性增加阶段，iteration 5200 的 alpha=0.0400，训练已推进到 iteration 5204（当前 alpha=0.0408）。FPS 29361，单轮采集 12.08 秒、学习 1.31 秒；mean reward -5.065，mean episode length 1000.00，AMP total/style reward 为 -1.787/0.398，XY/yaw 速度误差为 2.514/0.651，策略噪声 1.1167，学习率 0.0002563。与 iteration 5100 相比，平均回合长度提高约 3.1% 并达到满长，AMP style reward 提高约 32.6%，XY 速度误差改善约 2.1%，FPS 提高约 2.8%；mean reward 回落约 15.8%，yaw 误差上升约 2.1%，属于训练波动，未见积分引入导致的持续失稳。timeout 比例约 97.8%。训练进程 PID 12168 正常存活；GPU 为 NVIDIA RTX PRO 6000 Blackwell Server Edition，显存使用 22153 MiB、利用率 61%、功耗 201 W、温度 53 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 5300。
+
+[2026-09-04 助手监控连接优化]
+已建立仅本机有效、24 小时 ControlPersist 的 SSH 复用连接，并以 BatchMode 验证成功。该操作不修改服务器授权配置，口令未写入任何日志；后续周期检查可直接复用连接，降低长期监控期间的认证失败风险。
+
+[2026-09-04 助手持续监控：iteration 5300]
+积分线性增加阶段，iteration 5300 的 alpha=0.0600，训练已推进到 iteration 5305（当前 alpha=0.0610）。FPS 29120，单轮采集 12.17 秒、学习 1.33 秒；mean reward -7.110，mean episode length 1000.00，AMP total/style reward 为 -2.671/0.288，XY/yaw 速度误差为 2.614/0.686，策略噪声 1.1649，学习率 0.0001139。与 iteration 5200 相比，mean reward 回落约 40.4%，AMP style reward 回落约 27.6%，XY/yaw 误差分别上升约 4.0%/5.3%，策略噪声上升约 4.3%；但平均回合长度仍为满长、timeout 比例约 97.9%，进程及数值均正常，因此当前判断为需要关注的单点性能回落，而非训练失稳。后续 5400 将重点检查是否恢复或形成连续恶化趋势。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 55%、功耗 191 W、温度 47 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 5400。
+
+[2026-09-04 助手持续监控：iteration 5400]
+积分线性增加阶段，iteration 5400 的 alpha=0.0800，训练已推进到 iteration 5405（当前 alpha=0.0810）。FPS 28791，单轮采集 12.36 秒、学习 1.30 秒；mean reward -6.060，mean episode length 997.92，AMP total/style reward 为 -2.240/0.307，XY/yaw 速度误差为 2.647/0.632，策略噪声 1.1311，学习率 0.0003844。与 iteration 5300 相比，mean reward 改善约 14.8%，AMP style reward 提高约 6.7%，yaw 误差改善约 7.9%，策略噪声下降约 2.9%；XY 误差上升约 1.3%，FPS 下降约 1.1%，回合长度仍接近满长。5300 的性能回落已出现部分恢复，并未形成连续全面恶化；timeout 比例约 97.4%，继续维持原训练计划。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 58%、功耗 178 W、温度 54 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 5500，并验证 model_5500.pt。
+
+[2026-09-04 助手持续监控：iteration 5500]
+积分线性增加阶段，iteration 5500 的 alpha=0.1000，训练已推进到 iteration 5505（当前 alpha=0.1010）。FPS 29280，单轮采集 12.10 秒、学习 1.33 秒；mean reward -4.940，mean episode length 973.58，AMP total/style reward 为 -1.737/0.398，XY/yaw 速度误差为 2.571/0.634，策略噪声 1.1217，学习率 0.0003844。与 iteration 5400 相比，mean reward 改善约 18.5%，AMP style reward 提高约 29.5%，XY 误差改善约 2.9%，FPS 提高约 1.7%；平均回合长度下降约 2.4%，yaw 误差基本持平。5300 的性能回落进一步恢复，积分 alpha 达到 10% 后仍无失稳迹象，timeout 比例约 98.2%。model_5500.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=5500，模型、优化器、AMP 判别器及 normalizer 状态完整。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 53%、功耗 189 W、温度 54 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 5600。
+
+[2026-09-04 助手持续监控：iteration 5600]
+积分线性增加阶段，iteration 5600 的 alpha=0.1200，训练已推进到 iteration 5605（当前 alpha=0.1210）。FPS 29541，单轮采集 12.00 秒、学习 1.31 秒；mean reward -5.414，mean episode length 974.12，AMP total/style reward 为 -1.978/0.313，XY/yaw 速度误差为 2.526/0.634，策略噪声 1.1170，学习率 0.0003844。与 iteration 5500 相比，XY 速度误差改善约 1.7%，平均回合长度和 yaw 误差基本不变，FPS 提高约 0.9%；mean reward 回落约 9.6%，AMP style reward 回落约 21.3%，属于常见单点波动。timeout 比例约 98.0%，alpha 达到 12% 后仍未见稳定性恶化。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 59%、功耗 181 W、温度 54 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 5700。
+
+[2026-09-04 助手持续监控：iteration 5700]
+积分线性增加阶段，iteration 5700 的 alpha=0.1400，训练已推进到 iteration 5706（当前 alpha=0.1412）。FPS 29386，单轮采集 12.08 秒、学习 1.30 秒；mean reward -5.812，mean episode length 990.80，AMP total/style reward 为 -2.134/0.317，XY/yaw 速度误差为 2.648/0.632，策略噪声 1.1267，学习率 0.0003844。与 iteration 5600 相比，平均回合长度提高约 1.7%，yaw 误差略有改善，AMP style reward 基本持平；mean reward 回落约 7.4%，XY 误差上升约 4.8%，FPS 下降约 0.5%，仍处于正常波动范围。timeout 比例约 98.0%，alpha 达到 14% 后未见稳定性恶化。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 59%、功耗 312 W、温度 55 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 5800。
+
+[2026-09-04 用户提问]
+机器人现在已经能正常跟踪速度了吗
+
+[2026-09-04 助手回答]
+目前还不能认为已经能正常跟踪速度。机器人在稳定性方面已经较好：iteration 5700 的 mean episode length 为 990.8/1000，timeout 约 98%，说明大多数回合能持续到时限；但速度跟踪误差仍高，XY 为约 2.648 m/s、yaw 为约 0.632 rad/s。Isaac Lab 的该指标是在 10 秒命令周期内累计瞬时速度误差并除以最大命令步数，可近似理解为该命令周期的平均跟踪误差，而不是未经归一化的总和。结合训练命令范围 x=-0.5~3.0 m/s、y=-0.5~0.5 m/s、yaw=-1~1 rad/s，当前误差说明机器人能保持运动/站立，但还不能可靠地跟随给定速度。保守验收建议是 XY 误差降到约 0.3~0.5 m/s、yaw 误差降到约 0.15~0.25 rad/s，并用固定命令 play 回放验证。当前只训练到约 5700/30000、积分 alpha 约 14%，仍应继续训练。关节 PID 的积分渐进主要改善底层关节稳态误差，并不会自动保证高层基座速度跟踪；若后续误差长期维持 2.5 m/s 左右，需要调整速度命令 curriculum、速度跟踪奖励权重或 AMP 动作数据与目标速度的匹配。
+
+[2026-09-04 助手持续监控：iteration 5800]
+积分线性增加阶段，iteration 5800 的 alpha=0.1600，训练已推进到 iteration 5805（当前 alpha=0.1610）。FPS 30117，单轮采集 11.74 秒、学习 1.32 秒；mean reward -5.731，mean episode length 955.98，AMP total/style reward 为 -2.092/0.333，XY/yaw 速度误差为 2.466/0.652，策略噪声 1.1375，学习率 0.0002563。与 iteration 5700 相比，mean reward 改善约 1.4%，AMP style reward 提高约 5.1%，XY 速度误差改善约 6.9%，FPS 提高约 2.5%；yaw 误差上升约 3.2%，平均回合长度下降约 3.5%。XY 误差出现近期较明显改善，但 2.466 m/s 仍远未达到可靠速度跟踪水平。timeout 比例约 97.7%，alpha 达到 16% 后未见控制稳定性恶化。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 57%、功耗 201 W、温度 53 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 5900。
+
+[2026-09-04 助手持续监控：iteration 5900]
+积分线性增加阶段，iteration 5900 的 alpha=0.1800，训练已推进到 iteration 5905（当前 alpha=0.1810）。FPS 29541，单轮采集 12.00 秒、学习 1.31 秒；mean reward -5.573，mean episode length 987.26，AMP total/style reward 为 -2.040/0.315，XY/yaw 速度误差为 2.637/0.610，策略噪声 1.1294，学习率 0.0003844。与 iteration 5800 相比，mean reward 改善约 2.8%，平均回合长度提高约 3.3%，yaw 误差改善约 6.5%；XY 误差回升约 6.9%，基本回吐 5800 的单点改善，AMP style reward 回落约 5.4%，FPS 下降约 1.9%。因此速度跟踪尚未形成持续改善趋势，仍不能认为已正常跟踪；但 timeout 比例约 97.8%，alpha 达到 18% 后控制稳定性未恶化。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 59%、功耗 184 W、温度 54 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6000，并验证 model_6000.pt。
+
+[2026-09-04 助手持续监控：iteration 6000]
+积分线性增加阶段，iteration 6000 的 alpha=0.2000，训练已推进到 iteration 6006（当前 alpha=0.2012）。FPS 29453，单轮采集 12.05 秒、学习 1.31 秒；mean reward -5.894，mean episode length 982.25，AMP total/style reward 为 -2.061/0.494，XY/yaw 速度误差为 2.520/0.642，策略噪声 1.1170，学习率 0.0003844。与 iteration 5900 相比，AMP style reward 提高约 56.6%，XY 速度误差改善约 4.4%，策略噪声下降约 1.1%；mean reward 回落约 5.8%，yaw 误差上升约 5.4%，平均回合长度下降约 0.5%，FPS 基本不变。速度跟踪仍在波动，尚未达到正常水平；timeout 比例约 97.8%，alpha 达到 20% 后未见控制稳定性恶化。model_6000.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=6000，模型、优化器、AMP 判别器及 normalizer 状态完整。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 57%、功耗 185 W、温度 53 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6100。
+
+[2026-09-04 助手持续监控：iteration 6100]
+积分线性增加阶段，iteration 6100 的 alpha=0.2200，训练已推进到 iteration 6103（当前 alpha=0.2206）。FPS 29027，单轮采集 12.24 秒、学习 1.30 秒；mean reward -4.523，mean episode length 984.74，AMP total/style reward 为 -1.632/0.295，XY/yaw 速度误差为 2.624/0.644，策略噪声 1.1109，学习率 0.0003844。与 iteration 6000 相比，mean reward 改善约 23.3%，平均回合长度略有提高，策略噪声下降约 0.5%；XY 误差上升约 4.1%，yaw 误差基本不变，AMP style reward 回落。速度误差仍围绕约 2.5~2.6 m/s 平台波动，尚无突破；timeout 比例约 98.1%，alpha 达到 22% 后控制稳定性未恶化。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 61%、功耗 199 W、温度 47 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6200。
+
+[2026-09-04 助手持续监控：iteration 6200]
+积分线性增加阶段，iteration 6200 的 alpha=0.2400，训练已推进到 iteration 6205（当前 alpha=0.2410）。FPS 29527，单轮采集 12.01 秒、学习 1.31 秒；mean reward -4.952，mean episode length 991.70，AMP total/style reward 为 -1.774/0.346，XY/yaw 速度误差为 2.602/0.635，策略噪声 1.1064，学习率 0.0003844。与 iteration 6100 相比，平均回合长度提高约 0.7%，AMP style reward 提高约 17.1%，XY/yaw 速度误差分别小幅改善约 0.8%/1.4%；mean reward 回落约 9.5%，FPS 提高约 1.7%。连续多个里程碑显示 XY 误差稳定在约 2.5~2.6 m/s，速度跟踪平台已较明确，尚未达到正常水平；但 timeout 比例提高至约 98.6%，alpha 达到 24% 后控制稳定性仍好。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 43%、功耗 194 W、温度 48 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6300。
+
+[2026-09-04 助手只读配置核查]
+为判断速度跟踪平台成因，核查了运行任务继承的 G1 AMP 配置：训练命令从一开始即覆盖完整范围，lin_vel_x=-0.5~3.0 m/s、lin_vel_y=-0.5~0.5 m/s、ang_vel_z=-1.0~1.0 rad/s；线速度和角速度 curriculum 均被设为 None；线速度与角速度跟踪奖励权重均为 1.0，指数奖励 std=0.5。该组合会使早期策略直接面对较宽速度范围，且误差较大时指数奖励接近饱和为零，可能导致当前约 2.5~2.6 m/s 的学习平台。此次仅做只读诊断，未改动正在运行的训练。
+
+[2026-09-04 助手持续监控：iteration 6300]
+积分线性增加阶段，iteration 6300 的 alpha=0.2600，训练已推进到 iteration 6305（当前 alpha=0.2610）。FPS 29555，单轮采集 12.01 秒、学习 1.29 秒；mean reward -5.473，mean episode length 982.66，AMP total/style reward 为 -1.938/0.419，XY/yaw 速度误差为 2.652/0.624，策略噪声 1.1084，学习率 0.0003844。与 iteration 6200 相比，AMP style reward 提高约 21.1%，yaw 误差改善约 1.7%，FPS 基本不变；mean reward 回落约 10.5%，XY 误差上升约 1.9%，平均回合长度下降约 0.9%。timeout 比例从约 98.6% 降至约 96.8%，bad orientation 约 3.0%，需在 6400 继续观察，但仍未构成持续失稳。连续数据进一步确认速度误差平台，当前训练配置中的宽命令范围、禁用速度 curriculum 和较窄指数奖励 std 是可能原因。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 55%、功耗 180 W、温度 49 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6400。
+
+[2026-09-04 助手持续监控：iteration 6400]
+积分线性增加阶段，iteration 6400 的 alpha=0.2800，训练已推进到 iteration 6403（当前 alpha=0.2806）。FPS 29484，单轮采集 12.03 秒、学习 1.31 秒；mean reward -5.349，mean episode length 1000.00，AMP total/style reward 为 -1.936/0.339，XY/yaw 速度误差为 2.582/0.622，策略噪声 1.1125，学习率 0.0003844。与 iteration 6300 相比，mean reward 改善约 2.3%，XY 误差改善约 2.7%，yaw 误差略有改善，平均回合长度恢复到满长；AMP style reward 回落约 19.0%，FPS 基本不变。timeout 比例恢复至约 98.2%，bad orientation 降至约 1.65%，说明 6300 的稳定性下降是单点波动而非持续恶化。速度误差仍处于约 2.5~2.6 m/s 平台。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 62%、功耗 181 W、温度 50 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6500，并验证 model_6500.pt。
+
+[2026-09-04 助手持续监控：iteration 6500]
+积分线性增加阶段，iteration 6500 的 alpha=0.3000，训练已推进到 iteration 6505（当前 alpha=0.3010）。FPS 29753，单轮采集 11.90 秒、学习 1.31 秒；mean reward -5.205，mean episode length 1000.00，AMP total/style reward 为 -1.800/0.471，XY/yaw 速度误差为 2.588/0.632，策略噪声 1.1207，学习率 0.0002563。与 iteration 6400 相比，mean reward 改善约 2.7%，AMP style reward 提高约 38.7%，FPS 提高约 0.9%，平均回合长度保持满长；XY 误差基本不变，yaw 误差上升约 1.7%。速度跟踪仍处于平台，但 alpha 达到 30% 后控制稳定性仍好，timeout 比例约 97.4%。model_6500.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=6500，模型、优化器、AMP 判别器及 normalizer 状态完整。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 55%、功耗 182 W、温度 49 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6600。
+
+[2026-09-04 助手持续监控：iteration 6600]
+积分线性增加阶段，iteration 6600 的 alpha=0.3200，训练已推进到 iteration 6604（当前 alpha=0.3208）。FPS 29278，单轮采集 12.12 秒、学习 1.31 秒；mean reward -5.984，mean episode length 982.78，AMP total/style reward 为 -2.167/0.377，XY/yaw 速度误差为 2.660/0.641，策略噪声 1.1182，学习率 0.0003844。与 iteration 6500 相比，mean reward 回落约 15.0%，AMP style reward 回落约 19.9%，XY/yaw 误差分别上升约 2.8%/1.4%，平均回合长度下降约 1.7%，FPS 下降约 1.6%；但 timeout 比例仍约 97.9%，属于整体性能的单点回落，未出现控制失稳。速度跟踪平台继续存在。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 58%、功耗 187 W、温度 49 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6700。
+
+[2026-09-04 助手持续监控：iteration 6700]
+积分线性增加阶段，iteration 6700 的 alpha=0.3400，训练已推进到 iteration 6702（当前 alpha=0.3404）。FPS 29419，单轮采集 12.06 秒、学习 1.31 秒；mean reward -5.447，mean episode length 991.41，AMP total/style reward 为 -2.022/0.262，XY/yaw 速度误差为 2.493/0.630，策略噪声 1.1143，学习率 0.0002563。与 iteration 6600 相比，mean reward 改善约 9.0%，平均回合长度提高约 0.9%，XY/yaw 误差分别改善约 6.3%/1.7%，timeout 比例提高至约 98.7%；AMP style reward 回落约 30.6%，FPS 基本不变。6600 的整体回落已恢复，XY 误差降到近期较好水平，但仍在约 2.5 m/s 平台附近，尚不能判定速度跟踪正常。alpha 达到 34% 后控制稳定性良好。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 58%、功耗 178 W、温度 49 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6800。
+
+[2026-09-04 助手持续监控：iteration 6800]
+积分线性增加阶段，iteration 6800 的 alpha=0.3600，训练已推进到 iteration 6805（当前 alpha=0.3610）。FPS 29439，单轮采集 12.03 秒、学习 1.32 秒；mean reward -5.515，mean episode length 979.34，AMP total/style reward 为 -1.979/0.377，XY/yaw 速度误差为 2.671/0.635，策略噪声 1.1164，学习率 0.0003844。与 iteration 6700 相比，AMP style reward 提高约 44.1%，FPS 基本不变；mean reward 回落约 1.2%，平均回合长度下降约 1.2%，XY 误差上升约 7.1%，yaw 误差上升约 0.7%。6700 的 XY 改善未能保持，速度误差平台仍很明确；timeout 比例约 98.1%，alpha 达到 36% 后控制稳定性未恶化。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 61%、功耗 183 W、温度 50 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 6900。
+
+[2026-09-04 助手持续监控：iteration 6900]
+积分线性增加阶段，iteration 6900 的 alpha=0.3800，训练已推进到 iteration 6903（当前 alpha=0.3806）。FPS 29632，单轮采集 11.97 秒、学习 1.30 秒；mean reward -5.086，mean episode length 956.72，AMP total/style reward 为 -1.875/0.266，XY/yaw 速度误差为 2.537/0.640，策略噪声 1.1226，学习率 0.0003844。与 iteration 6800 相比，mean reward 改善约 7.8%，XY 误差改善约 5.0%，FPS 提高约 0.7%；平均回合长度下降约 2.3%，AMP style reward 回落约 29.5%，yaw 误差上升约 0.9%。速度误差仍在平台范围内；timeout 比例约 97.5%，alpha 达到 38% 后控制稳定性未恶化。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 52%、功耗 179 W、温度 50 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 7000，并验证 model_7000.pt。
+
+[2026-09-04 助手持续监控：iteration 7000]
+积分线性增加阶段，iteration 7000 的 alpha=0.4000，训练已推进到 iteration 7003（当前 alpha=0.4006）。FPS 29551，单轮采集 12.02 秒、学习 1.29 秒；mean reward -4.773，mean episode length 1000.00，AMP total/style reward 为 -1.778/0.218，XY/yaw 速度误差为 2.552/0.597，策略噪声 1.1234，学习率 0.0003844。与 iteration 6900 相比，mean reward 改善约 6.1%，平均回合长度提高约 4.5% 并达到满长，yaw 误差改善约 6.8%，XY 误差基本不变；AMP style reward 回落约 17.9%，FPS 基本不变。速度跟踪平台仍存在，但 yaw 指标出现近期最好水平；timeout 比例约 98.0%，alpha 达到 40% 后控制稳定性良好。model_7000.pt 已生成，大小 16202421 bytes；torch.load 验证成功，内部 iter=7000，模型、优化器、AMP 判别器及 normalizer 状态完整。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 31%、功耗 167 W、温度 50 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 7100。
+
+[2026-09-04 助手持续监控：iteration 7100]
+积分线性增加阶段，iteration 7100 的 alpha=0.4200，训练已推进到 iteration 7103（当前 alpha=0.4206）。FPS 29275，单轮采集 12.11 秒、学习 1.32 秒；mean reward -6.082，mean episode length 966.28，AMP total/style reward 为 -2.196/0.394，XY/yaw 速度误差为 2.516/0.619，策略噪声 1.1207，学习率 0.0003844。与 iteration 7000 相比，XY 误差改善约 1.4%，AMP style reward 提高约 80.9%；mean reward 回落约 27.4%，平均回合长度下降约 3.4%，yaw 误差上升约 3.7%，FPS 下降约 0.9%。timeout 比例约 98.1%，积分增益达到 42% 后仍以完整回合结束为主，没有观察到控制稳定性突变；但 XY 误差仍约 2.52 m/s，尚不能认为速度跟踪正常。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 66%、功耗 182 W、温度 50 摄氏度；系统盘剩余 22 GiB、数据盘剩余 31 GiB。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 7200。
+
+[2026-09-04 用户]
+拷贝一个节点下来，我play试试
+
+[2026-09-04 助手]
+已将云端最近的有效保存点 model_7000.pt 下载到本地 logs/rsl_rl/g1_amp_v3/2026-09-03_13-48-47_pid_curriculum_30000/，并同步 agent.yaml、env.yaml。远端与本地 SHA-256 均为 51970daa64617ac72df7983cc13cfa418da65af3da98d44b020dad798d3ac5df；文件大小 16202421 bytes；使用 env_isaaclab_2 的 torch.load 验证成功，内部 iter=7000，策略、优化器、AMP 判别器及 normalizer 状态完整。已修正本地 scripts/rsl_rl/play.py：加载 checkpoint 后将 iter=7000 同步给迭代感知执行器，从而按训练时积分 alpha=0.40 回放，而不是误用默认完整 PID。语法和 diff 检查通过。云端训练未暂停，最近观察到 iteration 7112。
+
+[2026-09-04 用户]
+能在云端尝试play吗？导出poily，实现sim2sim，云端验证完 ，然后再本地sim2sim
+
+[2026-09-04 助手：云端 Play、策略导出与 Sim2Sim 验证]
+已在不停止训练的情况下完成 model_7000.pt 的云端 Isaac Play。云端录像模式因实例没有可用 Vulkan 图形设备而无法渲染，改用 1 环境无渲染 Play；固定 vx=0.5 m/s、vy=0、yaw=0，按 checkpoint 恢复 PID alpha=0.40，连续运行 250 个策略步（5 秒）0 次重置，最终机体坐标约 (-0.170, 0.184, 0.700)，机体前向速度约 0.040 m/s，说明 Isaac 中能够站住但未正常跟踪 0.5 m/s 指令。play.py 已增加 checkpoint iteration 对 PID 状态的恢复、--max_steps 和 PLAY_SUMMARY 诊断。
+
+已从 model_7000.pt 导出 policy.pt（882514 bytes，SHA-256 2c89b214d629bb27078b79dbac0c30401091f35f31f9a921201e674104769699）和 policy.onnx（871770 bytes，SHA-256 c65db688245f7b7cee3f122688e4b79c8c5998da08e77b656ba6abf23eb5adee）。TorchScript 96 维输入到 29 维输出检查通过且数值有限；ONNX checker 通过。两文件已同步回本地对应 run 的 exported 目录。
+
+新增 scripts/mujoco/sim2sim_g1_pid_v3.py，按 v3 配置复现 29 关节显式 PID、积分力矩限幅、条件抗饱和、alpha 课程、1 ms 物理周期、50 Hz 策略、两个自由髋部辅助关节和两个后部机构 PD 关节。云端安装了与本地一致的 mujoco 3.11.0。云端与本地各执行 10 秒、alpha=0.40、vx=0.5 的 headless sim2sim，均得到 10 次跌倒重置、最大力矩 316 Nm、最大积分力矩约 3.92 Nm、平均 XY 速度误差约 0.668 m/s，状态保持有限但稳定性不通过；云端与本地关键数值差小于约 0.0013。对照旧基线策略在同一 MuJoCo 模型和映射下连续 10 秒 0 次重置、前进 3.55 m、平均 XY 误差 0.198 m/s，证明 MuJoCo 模型和映射链路基本有效，当前失败集中于 model_7000 的 sim2sim 迁移鲁棒性，而非导出损坏或积分项单独导致。
+
+[2026-09-04 助手持续监控：iteration 7200]
+积分线性增加阶段，iteration 7200 的 alpha=0.4400，训练已推进到 iteration 7208（当前 alpha=0.4416）。FPS 23205，单轮采集 15.04 秒、学习 1.90 秒；mean reward -5.434，mean episode length 974.00，AMP total/style reward 为 -2.026/0.246，XY/yaw 速度误差为 2.598/0.603，策略噪声 1.1215，学习率 0.0003844。与 iteration 7100 相比，mean reward 改善约 10.7%，平均回合长度提高约 0.8%，yaw 误差改善约 2.6%；XY 误差上升约 3.2%，AMP style reward 回落约 37.7%。该步 FPS 因并行云端 Play 临时下降约 20.7%；Play 退出后的 iteration 7208 已恢复到 28946 FPS（采集 12.33 秒、学习 1.26 秒）。timeout 比例约 97.95%，积分达到 44% 后未观察到稳定性突变，但速度跟踪平台仍明显。训练进程 PID 12168 正常存活；GPU 显存使用 22153 MiB、利用率 67%、功耗 191 W、温度 48 摄氏度。未发现 NaN、OOM、traceback 或 exception。下一汇报点为 7300。
+
+[2026-09-04 用户]
+有问题，怎么走不起来
+
+[2026-09-04 用户]
+奖励中有增加外骨骼相关的奖励吗？
+
+[2026-09-04 助手]
+没有。已核对本地与云端相同的 v3 配置：v3 直接继承原 G1AmpRewards，只包含速度跟踪、姿态、垂向/角速度、29 个本体关节力矩与加速度、动作变化、关节偏离、足端腾空/滑动和终止惩罚，没有外骨骼髋关节角差/速度差、外骨骼力矩/功率、后部滑块/圆柱位置速度或外骨骼碰撞奖励。四个额外机构关节也被排除在 policy、critic、AMP discriminator 以及 dof_torques_l2/dof_acc_l2 范围之外。两个髋部辅助关节 Kp/Kd/Ki 全为 0，属于自由被动关节；两个后部机构仅使用固定 Kp=10、Kd=1 的 PD，并无奖励项。因此策略只能通过本体状态间接感知外骨骼动力学，确实会削弱迁移鲁棒性；但单独增加奖励也不能直接驱动完全无控制输入的自由辅助关节。建议下一版同时加入外骨骼状态观测/约束奖励，并明确选择被动结构还是可控助力结构，同时重做速度命令课程与跟踪奖励。

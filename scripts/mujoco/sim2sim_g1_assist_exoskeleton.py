@@ -177,7 +177,7 @@ def reset_robot(mujoco, model, data, indices, history: AssistHistory) -> None:
     history.reset(data.qpos[indices["assist_qpos"]], data.qvel[indices["assist_qvel"]])
 
 
-def create_plot():
+def create_plot(angle_limit_deg: float = 4.0):
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(4, 2, figsize=(15, 12), sharex="col")
@@ -189,8 +189,13 @@ def create_plot():
         axes[0, col].set_ylabel("Angle (deg)")
 
         lines[f"{side}_pos_error"], = axes[1, col].plot([], [], color="tab:purple", label="assist - hip")
-        axes[1, col].axhline(4.0, color="tab:red", linestyle="--", label="±4°")
-        axes[1, col].axhline(-4.0, color="tab:red", linestyle="--")
+        axes[1, col].axhline(
+            angle_limit_deg,
+            color="tab:red",
+            linestyle="--",
+            label=f"±{angle_limit_deg:g}°",
+        )
+        axes[1, col].axhline(-angle_limit_deg, color="tab:red", linestyle="--")
         axes[1, col].set_title(f"{side.capitalize()} angle difference")
         axes[1, col].set_ylabel("Difference (deg)")
 

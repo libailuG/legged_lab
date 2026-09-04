@@ -1,4 +1,4 @@
-"""Environment configuration for G1 assist-exoskeleton v2."""
+"""Environment configuration for asymmetric G1 assist-exoskeleton v2-v2."""
 
 import math
 import os
@@ -57,15 +57,18 @@ REAR_MECHANISM_JOINT_CFG = SceneEntityCfg(
 
 @configclass
 class AssistActionsCfg:
-    """The policy controls two hip torques; mechanism joints use fixed PD targets."""
+    """The policy uses strong lift and softer press torque authority."""
 
     assist_torque = mdp.FrozenGaitAssistTorqueActionCfg(
         asset_name="robot",
         frozen_policy_path=FROZEN_GAIT_POLICY_PATH,
-        assist_torque_limit=8.0,
-        assist_torque_rate_limit=80.0,
-        command_speed_deadzone=0.2,
-        command_speed_full=0.7,
+        lift_torque_limit=10.0,
+        press_torque_limit=4.0,
+        lift_torque_rate_limit=80.0,
+        press_torque_rate_limit=40.0,
+        motion_speed_deadzone=0.15,
+        motion_speed_full=0.8,
+        motion_filter_time_constant=0.05,
     )
 
 
@@ -158,7 +161,8 @@ class AssistRewardsCfg:
         weight=-0.2,
         params={
             "action_name": "assist_torque",
-            "torque_rate_limit": 80.0,
+            "lift_torque_rate_limit": 80.0,
+            "press_torque_rate_limit": 40.0,
         },
     )
     assist_requested_rate_excess = RewTerm(
@@ -166,8 +170,9 @@ class AssistRewardsCfg:
         weight=-0.005,
         params={
             "action_name": "assist_torque",
-            "torque_limit": 8.0,
-            "torque_rate_limit": 80.0,
+            "torque_limit": 10.0,
+            "lift_torque_rate_limit": 80.0,
+            "press_torque_rate_limit": 40.0,
         },
     )
     # Temporarily disabled while retaining the reward implementations for later use.
@@ -207,7 +212,7 @@ class AssistRewardsCfg:
             "mode": "continuous_rest",
             "hip_cfg": HIP_PITCH_JOINT_CFG,
             "action_name": "assist_torque",
-            "torque_limit": 8.0,
+            "torque_limit": 10.0,
             "acceleration_filter_time_constant": 0.08,
             "rest_velocity_scale": 0.5,
             "rest_acceleration_scale": 3.0,
@@ -220,7 +225,9 @@ class AssistRewardsCfg:
             "mode": "tracking",
             "hip_cfg": HIP_PITCH_JOINT_CFG,
             "action_name": "assist_torque",
-            "torque_limit": 8.0,
+            "torque_limit": 10.0,
+            "lift_torque_limit": 10.0,
+            "press_torque_limit": 4.0,
             "velocity_gain": 2.0,
             "acceleration_gain": 0.04,
             "dynamics_scale": 1.5,
@@ -253,8 +260,8 @@ class AssistTerminationsCfg:
 
 
 @configclass
-class G1AssistExoskeletonV2EnvCfg(G1AssistAmpEnvCfg):
-    """Train the v2 two-action PPO with a frozen gait policy and mechanism PD."""
+class G1AssistExoskeletonV2V2EnvCfg(G1AssistAmpEnvCfg):
+    """Train v2-v2 with -10 Nm lift and +4 Nm press authority."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -297,8 +304,8 @@ class G1AssistExoskeletonV2EnvCfg(G1AssistAmpEnvCfg):
 
 
 @configclass
-class G1AssistExoskeletonV2EnvCfg_PLAY(G1AssistExoskeletonV2EnvCfg):
-    """Play configuration for the v2 assist policy."""
+class G1AssistExoskeletonV2V2EnvCfg_PLAY(G1AssistExoskeletonV2V2EnvCfg):
+    """Play configuration for the asymmetric v2-v2 assist policy."""
 
     def __post_init__(self):
         super().__post_init__()
