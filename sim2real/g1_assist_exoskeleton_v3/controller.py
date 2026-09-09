@@ -1,0 +1,102 @@
+"""100 Hz paired assistance core; no hardware communication or G1 state input."""
+import hashlib
+import json
+import math
+from pathlib import Path
+import numpy as np
+
+try:
+    from .numpy_policy import NumpyAssistPolicy, V3AssistHistory
+except ImportError:
+    from numpy_policy import NumpyAssistPolicy, V3AssistHistory
+
+
+def vector(value, name):
+    result = np.asarray(value, dtype=np.float32)
+    if result.shape != (2,) or not np.isfinite(result).all():
+        raise ValueError(f'{name} must be two finite values [left, right]')
+    return result
+
+
+class AssistController:
+    """reset(q,dq), then step(q,dq) at 100 Hz. Returns joint torque [T,-T].
+
+    Input must already be calibrated into training joint coordinates. Stop/errors
+    latch the controller off until reset. The caller must transmit zero/disable
+    on exceptions and provide a hardware-side communication watchdog.
+    """
+    def __init__(self, weights=None):
+        directory = Path(weights or Path(__file__).resolve().parent / 'weights')
+        manifest = json.loads((directory / 'manifest.json').read_text())
+        weights_path = directory / 'assist_policy.npz'
+        if hashlib.sha256(weights_path.read_bytes()).hexdigest() != manifest['npz_sha256']:
+            raise ValueError('Policy weights hash mismatch')
+        self.policy = NumpyAssistPolicy(weights_path)
+        self.cfg = manifest['control']
+        c = self.cfg
+        if not all(math.isfinite(v) for v in c.values()) or c['dt'] != .01 or c['torque_limit'] != 10:
+            raise ValueError('Expected finite v3 parameters / 100 Hz / +/-10 Nm')
+        if c['torque_rate_limit'] <= 0 or c['motion_filter_time_constant'] <= 0 or not 0 <= c['motion_speed_deadzone'] < c['motion_speed_full']:
+            raise ValueError('Invalid motion gate or rate limit')
+        self.history = V3AssistHistory()
+        self.stop()
+
+    def stop(self):
+        self.ready = False
+        self.first = True
+        self.scalar = 0.
+        self.filtered_velocity = np.zeros(2)
+        self.previous = np.zeros(2, dtype=np.float32)
+        self.raw_action = 0.
+        self.gate = 0.
+        self.last_timestamp = None
+        self.history.reset(np.zeros(2), np.zeros(2))
+        return self.previous.copy()
+
+    def reset(self, position, velocity):
+        self.stop()
+        self.history.reset(vector(position, 'position rad'), vector(velocity, 'velocity rad/s'))
+        self.ready = True
+
+    def step(self, position, velocity, *, enabled=True, timestamp=None):
+        if not enabled:
+            return self.stop()
+        if not self.ready:
+            raise RuntimeError('Controller stopped; reset required')
+        try:
+            p, v = vector(position, 'position rad'), vector(velocity, 'velocity rad/s')
+            if timestamp is not None:
+                timestamp = float(timestamp)
+                if not math.isfinite(timestamp):
+                    raise ValueError('Invalid sample timestamp')
+                if self.last_timestamp is not None and not .005 <= timestamp-self.last_timestamp <= .015:
+                    raise ValueError('Nonmonotonic, missing or mistimed 100 Hz sample; reset required')
+            elif self.last_timestamp is not None:
+                raise ValueError('Sample timestamps cannot be omitted after timestamped operation')
+            self.last_timestamp = timestamp
+            if self.first:
+                # Fill first observation with the actual first control sample.
+                self.history.reset(p, v)
+            else:
+                self.history.append(p, v, self.previous)
+            self.first = False
+            output = np.asarray(self.policy(self.history.observation()))
+            if output.shape != (1,) or not np.isfinite(output).all():
+                raise ValueError('Invalid policy output')
+            self.raw_action = float(output[0])
+            c = self.cfg
+            self.filtered_velocity += (1-math.exp(-c['dt']/c['motion_filter_time_constant'])) * (v-self.filtered_velocity)
+            phase = float(np.clip((np.max(np.abs(self.filtered_velocity))-c['motion_speed_deadzone']) /
+                                  (c['motion_speed_full']-c['motion_speed_deadzone']), 0., 1.))
+            self.gate = phase * phase * (3-2*phase)
+            target = float(np.clip(self.raw_action, -1., 1.)) * c['torque_limit'] * self.gate
+            if target * self.scalar < 0:
+                target = 0.
+            allowance = c['torque_rate_limit'] * c['dt']
+            self.scalar = float(np.clip(self.scalar + np.clip(target-self.scalar, -allowance, allowance),
+                                        -c['torque_limit'], c['torque_limit']))
+            self.previous = np.array([self.scalar, -self.scalar], dtype=np.float32)
+            return self.previous.copy()
+        except Exception:
+            self.stop()
+            raise

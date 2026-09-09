@@ -25,6 +25,8 @@ def _configure_inner_loop_timing(cfg: G1AmpEnvCfg) -> None:
 class G1AssistV1AmpEnvCfg(G1AmpEnvCfg):
     """Training configuration for the independently editable G1 assist v1 task."""
 
+    standing_training: bool = False
+
     def __post_init__(self):
         super().__post_init__()
         self.scene.robot = UNITREE_G1_29DOF_ASSIST_V1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
@@ -34,6 +36,8 @@ class G1AssistV1AmpEnvCfg(G1AmpEnvCfg):
 @configclass
 class G1AssistV1AmpEnvCfg_PLAY(G1AmpEnvCfg_PLAY):
     """Play configuration for the independently editable G1 assist v1 task."""
+
+    standing_training: bool = False
 
     def __post_init__(self):
         super().__post_init__()

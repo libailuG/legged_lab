@@ -134,6 +134,9 @@ torch.backends.cudnn.benchmark = False
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Train with RSL-RL agent."""
+    if args_cli.standing_training or getattr(env_cfg, "standing_training", False):
+        from legged_lab.tasks.locomotion.amp.config.g1_assist_v1.standing import enable_standing_training
+        enable_standing_training(env_cfg)
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
@@ -230,6 +233,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path, load_optimizer=not args_cli.policy_only_resume)
+        # Restored checkpoints may predate the exploration bounds. Apply them
+        # before the first rollout as well as after optimizer updates.
+        if hasattr(runner.alg, "_clamp_policy_noise_std"):
+            runner.alg._clamp_policy_noise_std()
         if args_cli.policy_only_resume:
             policy = runner.alg.policy
             with torch.no_grad():

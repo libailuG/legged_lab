@@ -95,6 +95,9 @@ import legged_lab.tasks  # noqa: F401
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
+    if args_cli.standing_training or getattr(env_cfg, "standing_training", False):
+        from legged_lab.tasks.locomotion.amp.config.g1_assist_v1.standing import enable_standing_training
+        enable_standing_training(env_cfg)
     # grab task name for checkpoint path
     task_name = args_cli.task.split(":")[-1]
     train_task_name = task_name.replace("-Play", "")

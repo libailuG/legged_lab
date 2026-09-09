@@ -604,8 +604,211 @@ conda run --no-capture-output -n env_isaaclab_2 \
 
 
 
+python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v2 \
+  --headless \
+  --num_envs 6000 \
+  --resume \
+  --load_run 2026-09-04_16-08-28_lift10_rate80_press4_rate40_motion_gate \
+  --checkpoint model_400.pt \
+  --max_iterations 1600 \
+  --run_name lift10_rate80_press4_rate40_motion_gate_resume
+
+cd /home/libai/08_amp/legged_lab
+
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-Play-v1 \
+  --num_envs 16 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_v1_amp/2026-09-04_20-03-58_rtx5090_bounded_noise_entropy0_remaining_29600/model_50400.pt
+
+  
+
+
+cd /home/libai/08_amp/legged_lab
+
+conda run --no-capture-output -n env_isaaclab_2 \
+  python scripts/mujoco/sim2sim_g1_assist_v1.py
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python \
+  scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2-v2 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v2_ppo/2026-09-04_17-54-31_lift10_rate80_press4_rate40_motion_gate_resume/model_1999.pt \
+  --num_envs 16 \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --real-time
+
+python \
+  scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2_v2.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v2_ppo/2026-09-04_17-54-31_lift10_rate80_press4_rate40_motion_gate_resume/exported/policy.pt \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0
+
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python \
+  /home/libai/08_amp/legged_lab/scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2_v2.py \
+  --assist-policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v2_ppo/2026-09-04_17-54-31_lift10_rate80_press4_rate40_motion_gate_resume/exported/policy.pt \
+  --vx 0.7 --vy 0 --yaw 0 \
+  --auto-reset-angle-deg 0 \
+  --no-live-plot
+
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python \
+  /home/libai/08_amp/legged_lab/scripts/mujoco/sim2sim_g1_pid_assist_exoskeleton_v2_v2.py \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --no-live-plot
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python \
+  /home/libai/08_amp/legged_lab/scripts/mujoco/sim2sim_g1_pid_assist_exoskeleton_v2_v2.py \
+  --vx 0.7 \
+  --vy 0.0 \
+  --yaw 0.0 \
+  --disable-assist
+
+  
+54 62
+
+44 47
+
+40 54 
+
+
+  python scripts/mujoco/sim2sim_g1_assist_v1.py \
+  --policy /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_v1_amp/2026-09-07_09-57-24_standing_reinforcement/exported/policy.pt
+
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python /home/libai/08_amp/legged_lab/scripts/rsl_rl/play_g1_v3_foot_contact.py --vx 0.7 --duration 15 --real-time
 
 
 
+现在的奖励会导致力输出的不对称，导致外骨骼晃动
+1.0 改变之前的辅助奖励
+2.0 人需要抬的力，但不喜欢腿在下落时，有下压的力 但是在左边抬的时候，右边如果不使用等大反向的力，会导致背板扭动，
+3.0 但人在脚触底后，给下压力是可以接受的。所以，比如辅助左腿上升时，需判断右腿有没有触地，才能进行较大扭矩的辅助
+4.0 帮我想想，怎么改造。
+
+
+cd /home/libai/08_amp/legged_lab
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v3 \
+  --num_envs 4096 \
+  --max_iterations 2000 \
+  --device cuda:0 \
+  --headless \
+  --logger tensorboard \
+  --seed 42 \
+  --run_name paired_assist_10nm_contact_critic
+
+  
+cd /home/libai/08_amp/legged_lab
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2-v3 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v3_ppo/2026-09-07_17-13-46_paired_assist_10nm_contact_critic/model_1999.pt \
+  --num_envs 1 \
+  --device cuda:0 \
+  --vx 0.7 --vy 0 --yaw 0 \
+  --real-time \
+  env.observations.policy.enable_corruption=False \
+  env.events.push_robot=null
+
+cd /home/libai/08_amp/legged_lab
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2_v3.py \
+  --vx 0.7 \
+  --duration 30
+
+cd /home/libai/08_amp/legged_lab
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2_v3.py \
+  --vx 0.7 \
+  --duration 30 \
+  --plot-window 5 \
+  --plot-interval 0.1 \
+  --keep-plots
+
+cd /home/libai/08_amp/legged_lab
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2_v3.py --vx 0.7 --plot-window 5
+
+重新训练，之前的机器人训练没有加入pid
+
+重新训练完成，play
+
+cd /home/libai/08_amp/legged_lab
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/play.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2-v3 \
+  --num_envs 1 \
+  --checkpoint /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v3_ppo/2026-09-08_10-06-19_paired_assist_10nm_body_pid/model_2000.pt
+
+sim2sim
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2_v3.py \
+  --env-config /home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v3_ppo/2026-09-08_10-06-19_paired_assist_10nm_body_pid/params/env.yaml \
+  --vx 0.7 --plot-window 5
+
+sim2real
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python \
+  sim2real/g1_assist_exoskeleton_v3/sim2sim_numpy.py \
+  --vx 0.7 --plot-window 5
+
+目前sim2real基本趋势是对的，但是辅助输出步态里存在震动。
+正常机器人抬腿到下落中，辅助力矩应该也是光滑的上升下降，而不是在一个步态中出现，多次的上升下降，中途出现变化，导致体感不行
+
+理解上述我的理解，并转换成你的理解
+
+
+cd /home/libai/08_amp/legged_lab
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v4 \
+  --num_envs 4096 --max_iterations 500 --headless \
+  --run_name single_pulse_04s
+
+  
+目前sim2real,感觉出力是对的，但是感觉力很小，在我低速行走时。
+还存在一个问题，在人抬腿到末尾是，因为速度和加速度，都很小了，此时的参考扭矩偏小
+还存在一个问题，人穿戴外骨骼是，关节零位并不在竖直状态 ，可以在每轮重置后，再obs的角度中加一个固定的偏置（-10 到 10 ）
+
+帮我看看是否存在这些问题。并分析
+
+
+
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v5 \
+  --num_envs 4096 --max_iterations 500 --headless \
+  --run_name low_speed_terminal_support_bias10
+
+
+
+cd /home/libai/08_amp/legged_lab
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v5 \
+  --num_envs 4096 --max_iterations 10000 --headless \
+  --run_name pulse_credit_fix
+
+
+cd /home/libai/08_amp/legged_lab
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v5 \
+  --num_envs 4096 --max_iterations 500 --headless \
+  --run_name pulse_credit_fix_1024
+
+目前测试逻辑没问题，但是力还是偏弱，
+有什么办法能够增大辅助力
+
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v6 \
+  --num_envs 4096 --max_iterations 500 --headless \
+  --run_name stronger_support
 
 '''

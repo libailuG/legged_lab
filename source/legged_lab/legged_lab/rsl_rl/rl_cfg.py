@@ -43,6 +43,12 @@ class RslRlPpoAmpAlgorithmCfg(RslRlPpoAlgorithmCfg):
     amp_cfg: RslRlAmpCfg = RslRlAmpCfg()
     """Configuration for the AMP (Adversarial Motion Priors) in the training."""
 
+    min_noise_std: float | None = None
+    """Optional lower bound for state-independent policy exploration noise."""
+
+    max_noise_std: float | None = None
+    """Optional upper bound for state-independent policy exploration noise."""
+
 
 #########################
 # Runner configurations #

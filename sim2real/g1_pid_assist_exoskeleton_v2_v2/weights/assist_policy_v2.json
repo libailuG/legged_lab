@@ -1,0 +1,31 @@
+{
+  "source_policy": "/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v2_ppo/2026-09-04_17-54-31_lift10_rate80_press4_rate40_motion_gate_resume/exported/policy.pt",
+  "weights_file": "assist_policy_v2.npz",
+  "dtype": "float32",
+  "policy_rate_hz": 100,
+  "history_length": 25,
+  "input_order": [
+    "25 oldest-to-newest [left_position_rad,right_position_rad]",
+    "25 oldest-to-newest [left_velocity_rad_s,right_velocity_rad_s]",
+    "25 oldest-to-newest [left_smoothed_torque_nm,right_smoothed_torque_nm]"
+  ],
+  "normalization": "(input - obs_mean) / (obs_std + normalizer_eps)",
+  "layers": [
+    150,
+    256,
+    64,
+    16,
+    2
+  ],
+  "hidden_activation": "ELU(alpha=1.0)",
+  "output": "motion gate from filtered joint velocity, target -10/+4 Nm, directional slew -80/+40 Nm/s, final physical clamp -8/+4 Nm",
+  "motion_gate": {
+    "deadzone_rad_s": 0.15,
+    "full_rad_s": 0.8,
+    "filter_tau_s": 0.05
+  },
+  "physical_limit_nm": [
+    -8.0,
+    4.0
+  ]
+}

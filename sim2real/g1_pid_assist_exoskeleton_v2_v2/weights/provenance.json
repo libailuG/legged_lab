@@ -1,0 +1,10 @@
+{
+  "assist_policy.pt": {
+    "source": "/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v2_ppo/2026-09-04_17-54-31_lift10_rate80_press4_rate40_motion_gate_resume/exported/policy.pt",
+    "sha256": "7640bf00e04f316730888b51ace0b460b214775a4efec314f06257f1985ebacd"
+  },
+  "gait_policy.pt": {
+    "source": "/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_v1_amp/2026-09-04_20-03-58_rtx5090_bounded_noise_entropy0_remaining_29600/exported/policy.pt",
+    "sha256": "764d5030d8adc9f620d76a1979c0cf1a7e1ea84933bfe280c5c6b358cbfaa4a5"
+  }
+}

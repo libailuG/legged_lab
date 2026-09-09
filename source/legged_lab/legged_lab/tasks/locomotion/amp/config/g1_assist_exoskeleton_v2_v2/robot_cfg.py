@@ -35,7 +35,9 @@ UNITREE_G1_29DOF_ASSIST_EXOSKELETON_V2_CFG.actuators[
     "exoskeleton_torque"
 ] = ImplicitActuatorCfg(
     joint_names_expr=["left_hip_pitch_assist_joint", "right_hip_pitch_assist_joint"],
-    effort_limit_sim=8.0,
+    # PhysX exposes a symmetric magnitude limit. The action term enforces
+    # the asymmetric [-10, +4] Nm command range before writing each effort.
+    effort_limit_sim=10.0,
     velocity_limit_sim=100.0,
     stiffness=0.0,
     damping=0.0,

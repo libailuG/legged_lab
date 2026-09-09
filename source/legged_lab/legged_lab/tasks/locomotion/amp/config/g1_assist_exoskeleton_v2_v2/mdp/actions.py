@@ -107,6 +107,13 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
                 f"Assist joint order mismatch: expected {cfg.assist_joint_names}, "
                 f"got {resolved_assist_names}"
             )
+        required_effort = max(cfg.lift_torque_limit, cfg.press_torque_limit)
+        physical_limits = self._asset.data.joint_effort_limits[:, self._assist_joint_ids]
+        if torch.any(physical_limits < required_effort).item():
+            raise ValueError(
+                f"Assist actuator physical limit must be at least {required_effort} Nm; "
+                "increase exoskeleton_torque.effort_limit_sim to match the action limits"
+            )
         if resolved_extra_names != cfg.extra_position_joint_names:
             raise RuntimeError(
                 f"Extra position joint order mismatch: expected "
@@ -240,6 +247,11 @@ class FrozenGaitAssistTorqueAction(ActionTerm):
         )
 
     def apply_actions(self):
+        # Enforce the directional bounds at the actuator command boundary too.
+        # PhysX's magnitude-only limit is 10 Nm, allowing full lift authority.
+        self._processed_actions.clamp_(
+            min=-self.cfg.lift_torque_limit, max=self.cfg.press_torque_limit
+        )
         self._asset.set_joint_position_target(
             self._gait_position_targets, joint_ids=self._policy_joint_ids
         )
