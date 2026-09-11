@@ -811,4 +811,27 @@ cd /home/libai/08_amp/legged_lab
   --num_envs 4096 --max_iterations 500 --headless \
   --run_name stronger_support
 
+  
+现在实际测试感觉，发力有点滞后，辅助人抬升，应该是超前。有什么方法吗
+
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v7 \
+  --num_envs 4096 --max_iterations 2000 --headless \
+  --run_name faster_response
+
+
+
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python scripts/rsl_rl/train.py \
+  --task LeggedLab-Isaac-AMP-G1-assist-exoskeleton-v2-v8 \
+  --num_envs 4096 --max_iterations 500 --headless \
+  --run_name motion_guard_cadence
+
+
+
+任务v8，测试出效果还行。
+
+cd /home/libai/08_amp/legged_lab
+python sim2real/g1_assist_exoskeleton_v8/demo.py --seconds 10
+
 '''

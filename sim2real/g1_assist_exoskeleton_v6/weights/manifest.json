@@ -1,0 +1,38 @@
+{
+  "control": {
+    "torque_limit": 10.0,
+    "torque_rate_limit": 80.0,
+    "motion_filter_time_constant": 0.05,
+    "motion_speed_deadzone": 0.15,
+    "motion_speed_full": 0.8,
+    "pulse_rise_time": 0.25,
+    "pulse_release_duration": 0.25,
+    "pulse_duration_min": 0.6,
+    "pulse_duration_max": 1.4,
+    "pulse_confirm_time": 0.06,
+    "dt": 0.01
+  },
+  "checkpoint": "/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v6_ppo/2026-09-09_14-00-18_stronger_support/model_499.pt",
+  "source_policy": "/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_exoskeleton_v2_v6_ppo/2026-09-09_14-00-18_stronger_support/exported/policy.pt",
+  "checkpoint_sha256": "dfab53af9e725d0931a7bfd0b225998650f16ae078a13d1d7bf3712c107fbb86",
+  "policy_sha256": "11ac0ae1d29d0e0a614ec9da1852e92dda24aba6591ffc85b9fa589b90257996",
+  "npz_sha256": "1a4867dfbac7c6084e1a79d04594f1f7b9fe8b93fe6dd29a339ec88a2ac10af0",
+  "layers": [
+    450,
+    256,
+    64,
+    16,
+    2
+  ],
+  "joint_order": [
+    "left",
+    "right"
+  ],
+  "position_unit": "rad",
+  "velocity_unit": "rad/s",
+  "torque_unit": "N.m",
+  "history": "term-major: 25 q pairs, 25 dq pairs, 25 processed torque pairs, 25 controller-state 12-vectors; oldest first",
+  "gait_policy_source": "/home/libai/08_amp/legged_lab/logs/rsl_rl/g1_assist_v1_amp/2026-09-07_09-57-24_standing_reinforcement/exported/policy_51800.pt",
+  "gait_policy_sha256": "acc2159fcda5794767a6ad4423b432327d5adefa6aa956656cf0e2f8bfc5b509",
+  "gait_npz_sha256": "4ed8c17fe9a08cccf1d4cb4658b448328ee8f11c54a3e546c74791ab6fa941e5"
+}

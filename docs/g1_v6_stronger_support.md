@@ -46,4 +46,20 @@ cd /home/libai/08_amp/legged_lab
 
 优先观察 `Episode_Reward/assist_completed_pulse_peak`、`assist_terminal_support` 与上述Pulse日志，同时检查 `assist_unsupported_press`、`assist_lowering_resistance` 是否恶化。负误差奖励更接近零表示匹配更好，不能只追求力矩大。奖励权重已变化，v5/v6奖励值不能直接比较，需比较相同速度下实际峰值、持续时间、支撑条件和行走稳定性。
 
-Play任务：`LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2-v6`。本次仅建立训练与Isaac Play任务，尚未生成v6 Sim2Sim/Sim2Real部署包。
+Play任务：`LeggedLab-Isaac-AMP-G1-assist-exoskeleton-Play-v2-v6`。训练与Isaac Play任务已建立；Sim2Sim见下节，Sim2Real见下节。
+
+## 500轮 Sim2Sim
+
+已导出 `2026-09-09_14-00-18_stronger_support/model_499.pt`，核对包含归一化的TorchScript与检查点推理一致。运行：
+
+```bash
+cd /home/libai/08_amp/legged_lab
+/home/libai/anaconda3/envs/env_isaaclab_2/bin/python \
+  scripts/mujoco/sim2sim_g1_assist_exoskeleton_v2_v6.py --vx 0.7 --plot-window 5
+```
+
+默认读取上述训练运行的env.yaml与exported/policy.pt，可通过 `--env-config`、`--assist-policy` 指定其他导出。使用v6脉冲模块，单机器人，实时滚动曲线和独立速度滑条，无CSV保存。关闭任一窗口或Ctrl+C退出。本体无观测噪声，外骨骼不加训练随机角度偏置。v6 Sim2Real见下节。
+
+## Sim2Real
+
+已为同一model_499.pt生成独立NumPy/C99部署包，保持训练脉冲行为，不额外放大输出、不添加随机角度偏置。来源校验及5项测试通过，包括1500步与v6 Sim2Sim的控制对齐。接入及离线演示见 [v6部署说明](../sim2real/g1_assist_exoskeleton_v6/README.md)。
